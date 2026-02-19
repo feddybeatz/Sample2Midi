@@ -41,11 +41,13 @@ target_compile_definitions(Sample2MIDI PUBLIC
 )
 
 target_link_libraries(Sample2MIDI PRIVATE
-    juce::juce_audio_utils
-    juce::juce_audio_processors
-    juce::juce_gui_extra
+    juce::juce_audio_basics
     juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_audio_utils
+    juce::juce_core
     juce::juce_dsp
+    juce::juce_gui_extra
 )
 
 juce_generate_juce_header(Sample2MIDI)
