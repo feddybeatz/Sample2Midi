@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Sample2MIDI VERSION 1.0.0 LANGUAGES CXX)
+project(Sample2MIDI VERSION 1.0.0 LANGUAGES C CXX)
 
 # Add JUCE
 add_subdirectory(JUCE)
