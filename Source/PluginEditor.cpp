@@ -62,16 +62,17 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
       dragZone.setVisible(true);
       resized();
 
-      // Update spectral display with audio data
-      auto buffer = audioProcessor.getAudioBuffer();
-      if (buffer && buffer->getNumSamples() > 0) {
-        spectralDisplay.setAudioData(buffer->getReadPointer(0),
-                                     buffer->getNumSamples(),
-                                     audioProcessor.getCurrentSampleRate());
-      }
-
       audioProcessor.loadAndAnalyze(
-          file, [this](int noteCount) { updateStatus(noteCount); });
+          file, [this](int noteCount) { updateStatus(noteCount); },
+          [this]() {
+            // Update spectral display when load completes
+            auto buffer = audioProcessor.getAudioBuffer();
+            if (buffer && buffer->getNumSamples() > 0) {
+              spectralDisplay.setAudioData(
+                  buffer->getReadPointer(0), buffer->getNumSamples(),
+                  audioProcessor.getCurrentSampleRate());
+            }
+          });
     });
   };
 
@@ -252,7 +253,8 @@ dragZone.onStartDrag = [this] {
 
     MidiBuilder mb;
     mb.exportMidi(audioProcessor.getDetectedNotes(),
-                  audioProcessor.getCurrentSampleRate(), tempFile);
+                  audioProcessor.getCurrentSampleRate(), tempFile,
+                  audioProcessor.detectedBPM.load());
 
     if (tempFile.existsAsFile()) {
       juce::DragAndDropContainer::performExternalDragDropOfFiles(
@@ -522,16 +524,17 @@ void Sample2MidiAudioProcessorEditor::filesDropped(
   dragZone.setVisible(true);
   resized();
 
-  // Update spectral display with audio data
-  auto buffer = audioProcessor.getAudioBuffer();
-  if (buffer && buffer->getNumSamples() > 0) {
-    spectralDisplay.setAudioData(buffer->getReadPointer(0),
-                                 buffer->getNumSamples(),
-                                 audioProcessor.getCurrentSampleRate());
-  }
-
   audioProcessor.loadAndAnalyze(
-      file, [this](int noteCount) { updateStatus(noteCount); });
+      file, [this](int noteCount) { updateStatus(noteCount); },
+      [this]() {
+        // Update spectral display when load completes
+        auto buffer = audioProcessor.getAudioBuffer();
+        if (buffer && buffer->getNumSamples() > 0) {
+          spectralDisplay.setAudioData(buffer->getReadPointer(0),
+                                       buffer->getNumSamples(),
+                                       audioProcessor.getCurrentSampleRate());
+        }
+      });
 }
 
 // ---------------------------------------------------------------------------

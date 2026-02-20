@@ -57,12 +57,13 @@ void Sample2MidiAudioProcessor::setStateInformation(const void *data,
 // ---------------------------------------------------------------------------
 
 void Sample2MidiAudioProcessor::loadAndAnalyze(
-    const juce::File &file, std::function<void(int noteCount)> onComplete) {
+    const juce::File &file, std::function<void(int noteCount)> onComplete,
+    std::function<void()> onLoadComplete) {
 
   audioFileLoader.loadAsync(
       file, formatManager,
-      [this, file, onComplete](juce::AudioBuffer<float> buffer,
-                               double sampleRate) {
+      [this, file, onComplete, onLoadComplete](juce::AudioBuffer<float> buffer,
+                                               double sampleRate) {
         // This lambda runs on the message thread.
         if (buffer.getNumSamples() == 0) {
           if (onComplete)
@@ -83,6 +84,9 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
               std::make_unique<juce::AudioFormatReaderSource>(reader, true);
           transportSource.setSource(readerSource.get(), 0, nullptr, sampleRate);
         }
+
+        if (onLoadComplete)
+          onLoadComplete();
 
         // Run pitch analysis on a background thread
         auto sharedBuffer =
@@ -262,7 +266,7 @@ double Sample2MidiAudioProcessor::detectBPMFromAudio(
 
     // Onset if energy increased significantly
     if (energy > prevEnergy * 1.5) {
-      onsetStrength.push_back((double)i / currentSampleRate);
+      onsetStrength.push_back((double)i / rate);
     }
   }
 

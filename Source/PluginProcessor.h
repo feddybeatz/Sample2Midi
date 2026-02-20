@@ -42,7 +42,8 @@ public:
   // -----------------------------------------------------------------------
 
   void loadAndAnalyze(const juce::File &file,
-                      std::function<void(int noteCount)> onComplete = nullptr);
+                      std::function<void(int noteCount)> onComplete = nullptr,
+                      std::function<void()> onLoadComplete = nullptr);
 
   const std::vector<MidiNote> &getDetectedNotes() const {
     return detectedNotes;
