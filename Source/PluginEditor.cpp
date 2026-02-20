@@ -88,10 +88,10 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   // Auto-detect button callback - detect scale from audio
   autoDetectButton.onClick = [this] {
     auto detectedScale = audioProcessor.detectScaleFromAudio();
-    if (!detectedScale.empty()) {
+    if (detectedScale.isNotEmpty()) {
       // Find the scale in dropdown and select it
       for (int i = 0; i < scaleDropdown.getNumItems(); ++i) {
-        if (scaleDropdown.getItemText(i) == detectedScale) {
+        if (scaleDropdown.getItemText(i) == juce::String(detectedScale)) {
           scaleDropdown.setSelectedId(i + 1);
           break;
         }

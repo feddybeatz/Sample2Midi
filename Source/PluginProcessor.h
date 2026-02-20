@@ -3,9 +3,12 @@
 #include "MidiBuilder.h"
 #include "PitchDetector.h"
 #include "ScaleQuantizer.h"
+#include <atomic>
+#include <functional>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <memory>
 
 class Sample2MidiAudioProcessor : public juce::AudioProcessor {
 public:
@@ -52,7 +55,7 @@ public:
   // -----------------------------------------------------------------------
 
   /** Auto-detect the musical scale from the loaded audio */
-  std::string detectScaleFromAudio();
+  juce::String detectScaleFromAudio();
 
   /** Auto-detect BPM from the loaded audio */
   double detectBPMFromAudio();
@@ -82,6 +85,29 @@ private:
 
   // Stored audio buffer for re-analysis (scale/BPM detection)
   std::shared_ptr<juce::AudioBuffer<float>> storedAudioBuffer;
+
+  // Thread safety for analysis
+  std::atomic<bool> shouldStopAnalysis{false};
+  juce::CriticalSection analysisMutex;
+
+  class AnalysisThread : public juce::Thread {
+  public:
+    AnalysisThread(Sample2MidiAudioProcessor &p)
+        : juce::Thread("AnalysisThread"), processor(p) {}
+    void run() override { processor.runAnalysisInternal(); }
+
+  private:
+    Sample2MidiAudioProcessor &processor;
+  };
+  std::unique_ptr<AnalysisThread> analysisThread;
+
+  // Internal method called by AnalysisThread
+  void runAnalysisInternal();
+
+  // Shared data for analysis thread
+  std::shared_ptr<juce::AudioBuffer<float>> analysisBuffer;
+  double analysisSampleRate = 44100.0;
+  std::function<void(int)> analysisCallback;
 
   PitchDetector pitchDetector;
   MidiBuilder midiBuilder;

@@ -1,5 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <algorithm>
+#include <cmath>
+#include <map>
 
 Sample2MidiAudioProcessor::Sample2MidiAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput(
@@ -8,6 +11,12 @@ Sample2MidiAudioProcessor::Sample2MidiAudioProcessor()
 }
 
 Sample2MidiAudioProcessor::~Sample2MidiAudioProcessor() {
+  // Stop analysis thread safely
+  shouldStopAnalysis = true;
+  if (analysisThread != nullptr) {
+    analysisThread->stopThread(3000);
+  }
+
   transportSource.setSource(nullptr);
 }
 
@@ -83,19 +92,22 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
         storedAudioBuffer =
             std::make_shared<juce::AudioBuffer<float>>(*sharedBuffer);
 
-        std::thread([this, sharedBuffer, sampleRate, onComplete]() {
-          auto notes = analyzeBuffer(*sharedBuffer, sampleRate);
+        // Use JUCE thread for safe background analysis
+        if (analysisThread != nullptr) {
+          shouldStopAnalysis = true;
+          analysisThread->stopThread(3000);
+          analysisThread = nullptr;
+        }
+        shouldStopAnalysis = false;
+        {
+          juce::ScopedLock lock(analysisMutex);
+          analysisBuffer = sharedBuffer;
+          analysisSampleRate = sampleRate;
+        }
+        analysisCallback = onComplete;
 
-          juce::MessageManager::callAsync([this, notes, onComplete]() mutable {
-            detectedNotes = std::move(notes);
-
-            if (onComplete)
-              onComplete((int)detectedNotes.size());
-
-            if (auto *editor = getActiveEditor())
-              editor->repaint();
-          });
-        }).detach();
+        analysisThread = std::make_unique<AnalysisThread>(*this);
+        analysisThread->startThread(juce::Thread::Priority::low);
       });
 }
 
@@ -162,9 +174,9 @@ bool Sample2MidiAudioProcessor::isPlaybackActive() const {
 // Scale and BPM detection
 // -----------------------------------------------------------------------
 
-std::string Sample2MidiAudioProcessor::detectScaleFromAudio() {
+juce::String Sample2MidiAudioProcessor::detectScaleFromAudio() {
   if (!storedAudioBuffer || storedAudioBuffer->getNumSamples() == 0)
-    return "";
+    return juce::String();
 
   const float *data = storedAudioBuffer->getReadPointer(0);
   int numSamples = storedAudioBuffer->getNumSamples();
@@ -187,7 +199,7 @@ std::string Sample2MidiAudioProcessor::detectScaleFromAudio() {
   }
 
   if (pitchHistogram.empty())
-    return "";
+    return juce::String();
 
   // Find the most common pitch (root note)
   int rootNote = 0;
@@ -222,9 +234,9 @@ std::string Sample2MidiAudioProcessor::detectScaleFromAudio() {
                               "F#", "G",  "G#", "A",  "A#", "B"};
 
   if (majorThirdCount > minorThirdCount) {
-    return std::string(majorRoots[rootSemitone]) + " Major";
+    return juce::String(majorRoots[rootSemitone]) + " Major";
   } else {
-    return std::string(minorRoots[rootSemitone]) + " Minor";
+    return juce::String(minorRoots[rootSemitone]) + " Minor";
   }
 }
 
@@ -318,4 +330,35 @@ void Sample2MidiAudioProcessor::exportMidiToFile() {
 
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
   return new Sample2MidiAudioProcessor();
+}
+
+// -----------------------------------------------------------------------
+// Internal analysis thread method
+// -----------------------------------------------------------------------
+void Sample2MidiAudioProcessor::runAnalysisInternal() {
+  if (shouldStopAnalysis || threadShouldExit())
+    return;
+
+  // Copy shared data under lock
+  std::shared_ptr<juce::AudioBuffer<float>> localBuffer;
+  double localSampleRate;
+  {
+    juce::ScopedLock lock(analysisMutex);
+    localBuffer = analysisBuffer;
+    localSampleRate = analysisSampleRate;
+  }
+
+  if (!localBuffer)
+    return;
+
+  auto notes = analyzeBuffer(*localBuffer, localSampleRate);
+  if (shouldStopAnalysis || threadShouldExit())
+    return;
+  juce::MessageManager::callAsync([this, notes]() mutable {
+    detectedNotes = std::move(notes);
+    if (analysisCallback)
+      analysisCallback((int)detectedNotes.size());
+    if (auto *editor = getActiveEditor())
+      editor->repaint();
+  });
 }

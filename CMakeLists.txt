@@ -38,8 +38,6 @@ target_sources(Sample2MIDI PRIVATE
     Source/ScaleQuantizer.h
     Source/SpectralDisplay.cpp
     Source/SpectralDisplay.h
-    Source/AudioAnalyzer.cpp
-    Source/AudioAnalyzer.h
 )
 
 target_compile_definitions(Sample2MIDI PUBLIC

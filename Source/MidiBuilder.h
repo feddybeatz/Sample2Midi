@@ -7,6 +7,7 @@ struct MidiNote {
   int endSample;
   int noteNumber;
   float velocity;
+  float centOffset = 0.0f; // Pitch bend offset in cents
 };
 
 class MidiBuilder {

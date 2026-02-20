@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
-
+#include <vector>
 
 float PitchDetector::detectPitch(const float *buffer, int numSamples,
                                  double sampleRate) {
