@@ -95,176 +95,180 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   addAndMakeVisible(autoDetectButton);
 
   // Auto-detect button callback - detect scale from audio (background thread)
-  autoDetectButton.onClick = [this] {
-    autoDetectButton.setEnabled(false);
-    autoDetectButton.setButtonText("...");
+  autoDetectButton.onClick =
+      [this] {
+        autoDetectButton.setEnabled(false);
+        autoDetectButton.setButtonText("...");
 
-    juce::Component::SafePointer<Sample2MidiAudioProcessorEditor> safeThis(
-        this);
+        juce::Component::SafePointer<Sample2MidiAudioProcessorEditor> safeThis(
+            this);
 
-    juce::Thread::launch([safeThis] {
-      if (safeThis == nullptr)
-        return;
+        juce::Thread::launch([safeThis] {
+          if (safeThis == nullptr)
+            return;
 
-      auto detectedKey = safeThis->audioProcessor.detectScaleFromAudio();
+          auto detectedKey = safeThis->audioProcessor.detectScaleFromAudio();
 
-      juce::MessageManager::callAsync([safeThis, detectedKey] {
-        if (safeThis == nullptr)
-          return;
+          juce::MessageManager::callAsync([safeThis, detectedKey] {
+            if (safeThis == nullptr)
+              return;
 
-        if (detectedKey.isEmpty()) {
-          safeThis->statusLabel.setText(
-              "Could not detect key — load a sample first",
-              juce::dontSendNotification);
-        } else {
-          safeThis->scaleDropdown.setText(detectedKey, juce::sendNotification);
-          safeThis->statusLabel.setText("Key detected: " + detectedKey,
-                                        juce::dontSendNotification);
-        }
+            if (detectedKey.isEmpty()) {
+              safeThis->statusLabel.setText(
+                  "Could not detect key — load a sample first",
+                  juce::dontSendNotification);
+            } else {
+              safeThis->scaleDropdown.setText(detectedKey,
+                                              juce::sendNotification);
+              safeThis->statusLabel.setText("Key detected: " + detectedKey,
+                                            juce::dontSendNotification);
+            }
 
-        safeThis->autoDetectButton.setEnabled(true);
-        safeThis->autoDetectButton.setButtonText(
-            juce::String::fromUTF8("\xe2\x9c\xa8"));
-      });
-    });
-    });
-};
+            safeThis->autoDetectButton.setEnabled(true);
+            safeThis->autoDetectButton.setButtonText(
+                juce::String::fromUTF8("\xe2\x9c\xa8"));
+          });
+        });
+      }
 
-// ---- Row 1: Quantize ----
-quantizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-quantizeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-quantizeSlider.setRange(0, 100, 1);
-quantizeSlider.setValue(75);
-quantizeSlider.setColour(juce::Slider::thumbColourId, Colors::accentCyan);
-addAndMakeVisible(quantizeSlider);
+      // ---- Row 1: Quantize ----
+      quantizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+  quantizeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+  quantizeSlider.setRange(0, 100, 1);
+  quantizeSlider.setValue(75);
+  quantizeSlider.setColour(juce::Slider::thumbColourId, Colors::accentCyan);
+  addAndMakeVisible(quantizeSlider);
 
-quantizeLabel.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-quantizeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-quantizeLabel.setJustificationType(juce::Justification::centredRight);
-quantizeLabel.setText(juce::String("75%"), juce::dontSendNotification);
-addAndMakeVisible(quantizeLabel);
+  quantizeLabel.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+  quantizeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+  quantizeLabel.setJustificationType(juce::Justification::centredRight);
+  quantizeLabel.setText(juce::String("75%"), juce::dontSendNotification);
+  addAndMakeVisible(quantizeLabel);
 
-quantizeSlider.onValueChange = [this] {
-  quantizeLabel.setText(juce::String((int)quantizeSlider.getValue()) +
-                            juce::String("%"),
-                        juce::dontSendNotification);
-};
+  quantizeSlider.onValueChange = [this] {
+    quantizeLabel.setText(juce::String((int)quantizeSlider.getValue()) +
+                              juce::String("%"),
+                          juce::dontSendNotification);
+  };
 
-// ---- Row 1: Range ----
-rangeDropdown.addItem("Full Range", 1);
-rangeDropdown.addItem("C2-C5", 2);
-rangeDropdown.addItem("C3-C6", 3);
-rangeDropdown.addItem("C4-C7", 4);
-rangeDropdown.setSelectedId(1);
-addAndMakeVisible(rangeDropdown);
+  // ---- Row 1: Range ----
+  rangeDropdown.addItem("Full Range", 1);
+  rangeDropdown.addItem("C2-C5", 2);
+  rangeDropdown.addItem("C3-C6", 3);
+  rangeDropdown.addItem("C4-C7", 4);
+  rangeDropdown.setSelectedId(1);
+  addAndMakeVisible(rangeDropdown);
 
-// ---- Row 1: Pitch Bend toggle ----
-pitchBendToggle.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
-pitchBendToggle.setColour(juce::TextButton::textColourOffId, Colors::textGray);
-pitchBendToggle.setColour(juce::TextButton::buttonOnColourId,
-                          Colors::accentCyan);
-pitchBendToggle.setColour(juce::TextButton::textColourOnId,
-                          juce::Colours::black);
-pitchBendToggle.setClickingTogglesState(true);
-pitchBendToggle.onClick = [this] {
-  pitchBendToggle.setButtonText(pitchBendToggle.getToggleState()
-                                    ? juce::String("ON")
-                                    : juce::String("OFF"));
-};
-addAndMakeVisible(pitchBendToggle);
+  // ---- Row 1: Pitch Bend toggle ----
+  pitchBendToggle.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
+  pitchBendToggle.setColour(juce::TextButton::textColourOffId,
+                            Colors::textGray);
+  pitchBendToggle.setColour(juce::TextButton::buttonOnColourId,
+                            Colors::accentCyan);
+  pitchBendToggle.setColour(juce::TextButton::textColourOnId,
+                            juce::Colours::black);
+  pitchBendToggle.setClickingTogglesState(true);
+  pitchBendToggle.onClick = [this] {
+    pitchBendToggle.setButtonText(pitchBendToggle.getToggleState()
+                                      ? juce::String("ON")
+                                      : juce::String("OFF"));
+  };
+  addAndMakeVisible(pitchBendToggle);
 
-// ---- Row 1: Chord Mode toggle ----
-chordModeToggle.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
-chordModeToggle.setColour(juce::TextButton::textColourOffId, Colors::textGray);
-chordModeToggle.setColour(juce::TextButton::buttonOnColourId,
-                          Colors::accentCyan);
-chordModeToggle.setColour(juce::TextButton::textColourOnId,
-                          juce::Colours::black);
-chordModeToggle.setClickingTogglesState(true);
-chordModeToggle.onClick = [this] {
-  bool isChordMode = chordModeToggle.getToggleState();
-  chordModeToggle.setButtonText(isChordMode ? juce::String("ON")
-                                            : juce::String("OFF"));
+  // ---- Row 1: Chord Mode toggle ----
+  chordModeToggle.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
+  chordModeToggle.setColour(juce::TextButton::textColourOffId,
+                            Colors::textGray);
+  chordModeToggle.setColour(juce::TextButton::buttonOnColourId,
+                            Colors::accentCyan);
+  chordModeToggle.setColour(juce::TextButton::textColourOnId,
+                            juce::Colours::black);
+  chordModeToggle.setClickingTogglesState(true);
+  chordModeToggle.onClick = [this] {
+    bool isChordMode = chordModeToggle.getToggleState();
+    chordModeToggle.setButtonText(isChordMode ? juce::String("ON")
+                                              : juce::String("OFF"));
 
-  // Enable/disable spectral display
-  spectralDisplay.setVisible(isChordMode);
-  resized();
-};
-addAndMakeVisible(chordModeToggle);
+    // Enable/disable spectral display
+    spectralDisplay.setVisible(isChordMode);
+    resized();
+  };
+  addAndMakeVisible(chordModeToggle);
 
-// ---- Spectral Display (chord view) ----
-addAndMakeVisible(spectralDisplay);
-spectralDisplay.setVisible(false);
+  // ---- Spectral Display (chord view) ----
+  addAndMakeVisible(spectralDisplay);
+  spectralDisplay.setVisible(false);
 
-// ---- Row 2: Play button ----
-// Unicode play triangle ▶
-playButton.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
-playButton.setColour(juce::TextButton::textColourOffId, Colors::accentCyan);
-playButton.setColour(juce::TextButton::buttonOnColourId, Colors::accentCyan);
-playButton.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
-playButton.setClickingTogglesState(true);
-playButton.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6")); // ▶
-playButton.onClick = [this] {
-  if (playButton.getToggleState()) {
-    audioProcessor.startPlayback();
-    isPlaying = true;
-    startTimer(30); // Update playhead every 30ms
-  } else {
+  // ---- Row 2: Play button ----
+  // Unicode play triangle ▶
+  playButton.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
+  playButton.setColour(juce::TextButton::textColourOffId, Colors::accentCyan);
+  playButton.setColour(juce::TextButton::buttonOnColourId, Colors::accentCyan);
+  playButton.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+  playButton.setClickingTogglesState(true);
+  playButton.setButtonText(juce::String::fromUTF8("\xe2\x96\xb6")); // ▶
+  playButton.onClick = [this] {
+    if (playButton.getToggleState()) {
+      audioProcessor.startPlayback();
+      isPlaying = true;
+      startTimer(30); // Update playhead every 30ms
+    } else {
+      audioProcessor.stopPlayback();
+      isPlaying = false;
+      stopTimer();
+    }
+    repaint();
+  };
+  addAndMakeVisible(playButton);
+
+  // ---- Row 2: Stop button ----
+  // Unicode stop square ■
+  stopButton.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
+  stopButton.setColour(juce::TextButton::textColourOffId, Colors::textGray);
+  stopButton.setButtonText(juce::String::fromUTF8("\xe2\x96\xa0")); // ■
+  stopButton.onClick = [this] {
     audioProcessor.stopPlayback();
     isPlaying = false;
     stopTimer();
-  }
-  repaint();
-};
-addAndMakeVisible(playButton);
+    playButton.setToggleState(false, juce::dontSendNotification);
+    repaint();
+  };
+  addAndMakeVisible(stopButton);
 
-// ---- Row 2: Stop button ----
-// Unicode stop square ■
-stopButton.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
-stopButton.setColour(juce::TextButton::textColourOffId, Colors::textGray);
-stopButton.setButtonText(juce::String::fromUTF8("\xe2\x96\xa0")); // ■
-stopButton.onClick = [this] {
-  audioProcessor.stopPlayback();
-  isPlaying = false;
-  stopTimer();
-  playButton.setToggleState(false, juce::dontSendNotification);
-  repaint();
-};
-addAndMakeVisible(stopButton);
+  // ---- Row 2: Export MIDI button ----
+  // Opens a Save dialog and writes the .mid file
+  exportButton.setColour(juce::TextButton::buttonColourId, Colors::accentCyan);
+  exportButton.setColour(juce::TextButton::textColourOffId,
+                         juce::Colours::black);
+  exportButton.onClick = [this] { audioProcessor.exportMidiToFile(); };
+  addAndMakeVisible(exportButton);
 
-// ---- Row 2: Export MIDI button ----
-// Opens a Save dialog and writes the .mid file
-exportButton.setColour(juce::TextButton::buttonColourId, Colors::accentCyan);
-exportButton.setColour(juce::TextButton::textColourOffId, juce::Colours::black);
-exportButton.onClick = [this] { audioProcessor.exportMidiToFile(); };
-addAndMakeVisible(exportButton);
+  // ---- Drag zone ----
+  // Allows dragging the exported MIDI file directly into FL Studio
+  dragZone.setVisible(false);
+  dragZone.onStartDrag = [this] {
+    if (!audioProcessor.getDetectedNotes().empty()) {
+      // Write temp file then start external drag
+      juce::File tempFile =
+          juce::File::getSpecialLocation(juce::File::tempDirectory)
+              .getChildFile("Sample2MIDI_Export.mid");
+      if (tempFile.existsAsFile())
+        tempFile.deleteFile();
 
-// ---- Drag zone ----
-// Allows dragging the exported MIDI file directly into FL Studio
-dragZone.setVisible(false);
-dragZone.onStartDrag = [this] {
-  if (!audioProcessor.getDetectedNotes().empty()) {
-    // Write temp file then start external drag
-    juce::File tempFile =
-        juce::File::getSpecialLocation(juce::File::tempDirectory)
-            .getChildFile("Sample2MIDI_Export.mid");
-    if (tempFile.existsAsFile())
-      tempFile.deleteFile();
+      MidiBuilder mb;
+      mb.exportMidi(audioProcessor.getDetectedNotes(),
+                    audioProcessor.getCurrentSampleRate(), tempFile,
+                    audioProcessor.detectedBPM.load());
 
-    MidiBuilder mb;
-    mb.exportMidi(audioProcessor.getDetectedNotes(),
-                  audioProcessor.getCurrentSampleRate(), tempFile,
-                  audioProcessor.detectedBPM.load());
-
-    if (tempFile.existsAsFile()) {
-      juce::DragAndDropContainer::performExternalDragDropOfFiles(
-          {tempFile.getFullPathName()}, false);
+      if (tempFile.existsAsFile()) {
+        juce::DragAndDropContainer::performExternalDragDropOfFiles(
+            {tempFile.getFullPathName()}, false);
+      }
     }
-  }
-};
-addAndMakeVisible(dragZone);
+  };
+  addAndMakeVisible(dragZone);
 
-setSize(800, 500);
+  setSize(800, 500);
 }
 
 // ---------------------------------------------------------------------------
