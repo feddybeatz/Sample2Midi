@@ -2,28 +2,24 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <vector>
 
-struct RawNoteEvent {
-    int midiNote;
-    double timestamp;
-    float velocity;
-};
-
-struct CleanNote {
-    int midiNote;
-    double startTime;
-    double endTime;
-    float velocity;
+struct MidiNote {
+  int startSample;
+  int endSample;
+  int noteNumber;
+  float velocity;
 };
 
 class MidiBuilder {
 public:
-    MidiBuilder() = default;
-    
-    std::vector<CleanNote> assembleNotes(const std::vector<RawNoteEvent>& rawEvents, double sampleRate);
-    void exportMidi(const std::vector<CleanNote>& notes, const juce::File& file);
-    void performDragDrop(const std::vector<CleanNote>& notes);
+  MidiBuilder() = default;
+
+  std::vector<MidiNote> buildNotes(const std::vector<int> &framePitches,
+                                   const std::vector<float> &frameAmps,
+                                   int hopSize, double sampleRate);
+  void exportMidi(const std::vector<MidiNote> &notes, double sampleRate,
+                  const juce::File &file);
+  void performDragDrop(const std::vector<MidiNote> &notes, double sampleRate);
 
 private:
-    static constexpr double MIN_NOTE_DURATION = 0.06; // 60ms
-    static constexpr double NOTE_CONTINUATION_GAP = 0.02; // 20ms
+  static constexpr double MIN_NOTE_DURATION_MS = 30.0;
 };

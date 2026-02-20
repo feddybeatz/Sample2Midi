@@ -1,2 +1,2 @@
 #include "AudioFileLoader.h"
-// Header-only implementation logic used, cpp provided for build consistency
+// Implementation is header-only; this file exists for build-system consistency.
