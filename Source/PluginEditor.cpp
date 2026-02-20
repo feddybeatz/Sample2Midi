@@ -95,44 +95,42 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   addAndMakeVisible(autoDetectButton);
 
   // Auto-detect button callback - detect scale from audio (background thread)
-  autoDetectButton.onClick =
-      [this] {
-        autoDetectButton.setEnabled(false);
-        autoDetectButton.setButtonText("...");
+  autoDetectButton.onClick = [this] {
+    autoDetectButton.setEnabled(false);
+    autoDetectButton.setButtonText("...");
 
-        juce::Component::SafePointer<Sample2MidiAudioProcessorEditor> safeThis(
-            this);
+    juce::Component::SafePointer<Sample2MidiAudioProcessorEditor> safeThis(
+        this);
 
-        juce::Thread::launch([safeThis] {
-          if (safeThis == nullptr)
-            return;
+    juce::Thread::launch([safeThis] {
+      if (safeThis == nullptr)
+        return;
 
-          auto detectedKey = safeThis->audioProcessor.detectScaleFromAudio();
+      auto detectedKey = safeThis->audioProcessor.detectScaleFromAudio();
 
-          juce::MessageManager::callAsync([safeThis, detectedKey] {
-            if (safeThis == nullptr)
-              return;
+      juce::MessageManager::callAsync([safeThis, detectedKey] {
+        if (safeThis == nullptr)
+          return;
 
-            if (detectedKey.isEmpty()) {
-              safeThis->statusLabel.setText(
-                  "Could not detect key — load a sample first",
-                  juce::dontSendNotification);
-            } else {
-              safeThis->scaleDropdown.setText(detectedKey,
-                                              juce::sendNotification);
-              safeThis->statusLabel.setText("Key detected: " + detectedKey,
-                                            juce::dontSendNotification);
-            }
+        if (detectedKey.isEmpty()) {
+          safeThis->statusLabel.setText(
+              "Could not detect key — load a sample first",
+              juce::dontSendNotification);
+        } else {
+          safeThis->scaleDropdown.setText(detectedKey, juce::sendNotification);
+          safeThis->statusLabel.setText("Key detected: " + detectedKey,
+                                        juce::dontSendNotification);
+        }
 
-            safeThis->autoDetectButton.setEnabled(true);
-            safeThis->autoDetectButton.setButtonText(
-                juce::String::fromUTF8("\xe2\x9c\xa8"));
-          });
-        });
-      }
+        safeThis->autoDetectButton.setEnabled(true);
+        safeThis->autoDetectButton.setButtonText(
+            juce::String::fromUTF8("\xe2\x9c\xa8"));
+      });
+    });
+  };
 
-      // ---- Row 1: Quantize ----
-      quantizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+  // ---- Row 1: Quantize ----
+  quantizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
   quantizeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
   quantizeSlider.setRange(0, 100, 1);
   quantizeSlider.setValue(75);
