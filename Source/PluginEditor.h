@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "SpectralDisplay.h"
 #include "WaveformDisplay.h"
 #include <functional>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -165,6 +166,7 @@ private:
 
   juce::AudioThumbnailCache thumbnailCache{5};
   WaveformDisplay waveformDisplay;
+  SpectralDisplay spectralDisplay;
 
   // -------------------------------------------------------------------------
   // Components

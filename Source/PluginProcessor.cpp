@@ -79,6 +79,10 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
         auto sharedBuffer =
             std::make_shared<juce::AudioBuffer<float>>(std::move(buffer));
 
+        // Store the buffer for scale/BPM detection
+        storedAudioBuffer =
+            std::make_shared<juce::AudioBuffer<float>>(*sharedBuffer);
+
         std::thread([this, sharedBuffer, sampleRate, onComplete]() {
           auto notes = analyzeBuffer(*sharedBuffer, sampleRate);
 
@@ -151,6 +155,138 @@ void Sample2MidiAudioProcessor::stopPlayback() {
 
 bool Sample2MidiAudioProcessor::isPlaybackActive() const {
   return transportSource.isPlaying();
+}
+
+// -----------------------------------------------------------------------
+// Scale and BPM detection
+// -----------------------------------------------------------------------
+
+std::string Sample2MidiAudioProcessor::detectScaleFromAudio() {
+  if (!storedAudioBuffer || storedAudioBuffer->getNumSamples() == 0)
+    return "";
+
+  const float *data = storedAudioBuffer->getReadPointer(0);
+  int numSamples = storedAudioBuffer->getNumSamples();
+
+  // Collect pitch histogram
+  std::map<int, int> pitchHistogram;
+
+  const int windowSize = 4096;
+  const int hopSize = 2048;
+
+  for (int i = 0; i < numSamples - windowSize; i += hopSize) {
+    float freq =
+        pitchDetector.detectPitch(data + i, windowSize, currentSampleRate);
+    if (freq > 0) {
+      int midi = (int)std::round(69.0 + 12.0 * std::log2(freq / 440.0));
+      if (midi >= 0 && midi <= 127) {
+        pitchHistogram[midi]++;
+      }
+    }
+  }
+
+  if (pitchHistogram.empty())
+    return "";
+
+  // Find the most common pitch (root note)
+  int rootNote = 0;
+  int maxCount = 0;
+  for (const auto &pair : pitchHistogram) {
+    if (pair.second > maxCount) {
+      maxCount = pair.second;
+      rootNote = pair.first;
+    }
+  }
+
+  // Determine if major or minor based on intervals
+  int rootSemitone = rootNote % 12;
+
+  // Count occurrences of major/minor third intervals
+  int majorThirdCount = 0; // 4 semitones above root
+  int minorThirdCount = 0; // 3 semitones above root
+
+  for (const auto &pair : pitchHistogram) {
+    int semitone = pair.first % 12;
+    int interval = (semitone - rootSemitone + 12) % 12;
+    if (interval == 4)
+      majorThirdCount += pair.second;
+    if (interval == 3)
+      minorThirdCount += pair.second;
+  }
+
+  // Map to scale names
+  const char *majorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
+                              "F#", "G",  "G#", "A",  "A#", "B"};
+  const char *minorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
+                              "F#", "G",  "G#", "A",  "A#", "B"};
+
+  if (majorThirdCount > minorThirdCount) {
+    return std::string(majorRoots[rootSemitone]) + " Major";
+  } else {
+    return std::string(minorRoots[rootSemitone]) + " Minor";
+  }
+}
+
+double Sample2MidiAudioProcessor::detectBPMFromAudio() {
+  if (!storedAudioBuffer || storedAudioBuffer->getNumSamples() == 0)
+    return 120.0; // Default BPM
+
+  const float *data = storedAudioBuffer->getReadPointer(0);
+  int numSamples = storedAudioBuffer->getNumSamples();
+
+  // Simple onset detection using energy difference
+  const int blockSize = 1024;
+  std::vector<double> onsetStrength;
+
+  for (int i = blockSize; i < numSamples - blockSize; i += blockSize) {
+    double energy = 0;
+    for (int j = 0; j < blockSize; ++j) {
+      energy += data[i + j] * data[i + j];
+    }
+    energy = std::sqrt(energy / blockSize);
+
+    // Compare with previous block
+    double prevEnergy = 0;
+    for (int j = 0; j < blockSize; ++j) {
+      prevEnergy += data[i - blockSize + j] * data[i - blockSize + j];
+    }
+    prevEnergy = std::sqrt(prevEnergy / blockSize);
+
+    // Onset if energy increased significantly
+    if (energy > prevEnergy * 1.5) {
+      onsetStrength.push_back((double)i / currentSampleRate);
+    }
+  }
+
+  if (onsetStrength.size() < 4)
+    return 120.0; // Not enough onsets detected
+
+  // Find the most common interval between onsets
+  std::map<double, int> intervalHistogram;
+
+  for (size_t i = 1; i < onsetStrength.size(); ++i) {
+    double interval = onsetStrength[i] - onsetStrength[i - 1];
+    // Round to nearest common BPM interval
+    double bpm = 60.0 / interval;
+
+    // Quantize to common BPM values
+    bpm = std::round(bpm / 5.0) * 5.0;
+    bpm = std::clamp(bpm, 60.0, 200.0);
+
+    intervalHistogram[bpm]++;
+  }
+
+  // Find most common BPM
+  double detectedBPM = 120.0;
+  int maxCount = 0;
+  for (const auto &pair : intervalHistogram) {
+    if (pair.second > maxCount) {
+      maxCount = pair.second;
+      detectedBPM = pair.first;
+    }
+  }
+
+  return detectedBPM;
 }
 
 // ---------------------------------------------------------------------------

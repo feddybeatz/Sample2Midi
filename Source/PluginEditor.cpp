@@ -28,6 +28,16 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   addAndMakeVisible(zoomInButton);
   addAndMakeVisible(zoomOutButton);
 
+  // Zoom button callbacks
+  zoomInButton.onClick = [this] {
+    double currentZoom = waveformDisplay.getZoom();
+    waveformDisplay.setZoom(currentZoom * 1.5);
+  };
+  zoomOutButton.onClick = [this] {
+    double currentZoom = waveformDisplay.getZoom();
+    waveformDisplay.setZoom(currentZoom / 1.5);
+  };
+
   // ---- Status bar ----
   statusLabel.setColour(juce::Label::textColourId, Colors::textGray);
   statusLabel.setFont(juce::Font(juce::FontOptions(14.0f)));
@@ -74,6 +84,23 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
                              Colors::accentCyan);
   autoDetectButton.setButtonText(juce::String::fromUTF8("\xe2\x9c\xa8")); // ✨
   addAndMakeVisible(autoDetectButton);
+
+  // Auto-detect button callback - detect scale from audio
+  autoDetectButton.onClick = [this] {
+    auto detectedScale = audioProcessor.detectScaleFromAudio();
+    if (!detectedScale.empty()) {
+      // Find the scale in dropdown and select it
+      for (int i = 0; i < scaleDropdown.getNumItems(); ++i) {
+        if (scaleDropdown.getItemText(i) == detectedScale) {
+          scaleDropdown.setSelectedId(i + 1);
+          break;
+        }
+      }
+      statusLabel.setText(juce::String("Detected: ") + detectedScale,
+                          juce::dontSendNotification);
+      statusLabel.setColour(juce::Label::textColourId, Colors::successGreen);
+    }
+  };
 
   // ---- Row 1: Quantize ----
   quantizeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
@@ -129,11 +156,19 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
                             juce::Colours::black);
   chordModeToggle.setClickingTogglesState(true);
   chordModeToggle.onClick = [this] {
-    chordModeToggle.setButtonText(chordModeToggle.getToggleState()
-                                      ? juce::String("ON")
-                                      : juce::String("OFF"));
+    bool isChordMode = chordModeToggle.getToggleState();
+    chordModeToggle.setButtonText(isChordMode ? juce::String("ON")
+                                              : juce::String("OFF"));
+
+    // Enable/disable spectral display
+    spectralDisplay.setVisible(isChordMode);
+    resized();
   };
   addAndMakeVisible(chordModeToggle);
+
+  // ---- Spectral Display (chord view) ----
+  addAndMakeVisible(spectralDisplay);
+  spectralDisplay.setVisible(false);
 
   // ---- Row 2: Play button ----
   // Unicode play triangle ▶
@@ -345,7 +380,18 @@ void Sample2MidiAudioProcessorEditor::resized() {
 
   // ---- Waveform ----
   auto waveformArea = bounds.reduced(16, 8);
-  waveformDisplay.setBounds(waveformArea);
+
+  // If chord mode is enabled, show spectral display instead
+  if (chordModeToggle.getToggleState()) {
+    // Split the area: top half waveform, bottom half spectral
+    auto spectralArea =
+        waveformArea.removeFromBottom(waveformArea.getHeight() / 2);
+    spectralDisplay.setBounds(spectralArea);
+    waveformDisplay.setBounds(waveformArea);
+  } else {
+    waveformDisplay.setBounds(waveformArea);
+    spectralDisplay.setBounds(waveformArea); // Hidden anyway
+  }
 
   // ---- Zoom buttons (overlay on waveform, top-right) ----
   auto wfBounds = waveformDisplay.getBounds();

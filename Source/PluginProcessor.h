@@ -48,6 +48,16 @@ public:
   juce::AudioFormatManager &getFormatManager() { return formatManager; }
 
   // -----------------------------------------------------------------------
+  // Scale and BPM detection
+  // -----------------------------------------------------------------------
+
+  /** Auto-detect the musical scale from the loaded audio */
+  std::string detectScaleFromAudio();
+
+  /** Auto-detect BPM from the loaded audio */
+  double detectBPMFromAudio();
+
+  // -----------------------------------------------------------------------
   // Playback (preview the loaded audio)
   // -----------------------------------------------------------------------
 
@@ -69,6 +79,9 @@ private:
   juce::AudioFormatManager formatManager;
   std::vector<MidiNote> detectedNotes;
   double currentSampleRate = 44100.0;
+
+  // Stored audio buffer for re-analysis (scale/BPM detection)
+  std::shared_ptr<juce::AudioBuffer<float>> storedAudioBuffer;
 
   PitchDetector pitchDetector;
   MidiBuilder midiBuilder;
