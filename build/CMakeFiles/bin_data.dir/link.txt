@@ -1,0 +1,2 @@
+/usr/bin/ar qc libbin_data.a CMakeFiles/bin_data.dir/juce_binarydata_bin_data/JuceLibraryCode/BinaryData1.cpp.o CMakeFiles/bin_data.dir/juce_binarydata_bin_data/JuceLibraryCode/BinaryData2.cpp.o CMakeFiles/bin_data.dir/juce_binarydata_bin_data/JuceLibraryCode/BinaryData3.cpp.o CMakeFiles/bin_data.dir/juce_binarydata_bin_data/JuceLibraryCode/BinaryData4.cpp.o CMakeFiles/bin_data.dir/juce_binarydata_bin_data/JuceLibraryCode/BinaryData5.cpp.o
+/usr/bin/ranlib libbin_data.a

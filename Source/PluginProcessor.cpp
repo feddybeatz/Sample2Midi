@@ -121,39 +121,50 @@ Sample2MidiAudioProcessor::analyzeBuffer(const juce::AudioBuffer<float> &buffer,
   // Prepare the neural pitch detector
   pitchDetector.prepare(sampleRate);
 
+  DBG("=== analyzeBuffer called ===");
+  DBG("Buffer samples: " + juce::String(buffer.getNumSamples()));
+  DBG("Sample rate: " + juce::String(sampleRate));
+
   // Use NeuralNote to analyze the audio
   auto notes = pitchDetector.analyze(buffer);
 
-  // Convert NeuralNote::Note to MidiNote
+  DBG("Notes from pitchDetector.analyze: " + juce::String(notes.size()));
+
+  // Convert Notes::Event to MidiNote
   std::vector<MidiNote> midiNotes;
   for (const auto &note : notes) {
     MidiNote midi;
-    midi.noteNumber = note.midiNote;
+    midi.noteNumber = note.pitch; // Notes::Event uses 'pitch'
     midi.startSample = (int)(note.startTime * sampleRate);
     midi.endSample = (int)(note.endTime * sampleRate);
-    midi.velocity = note.velocity;
+    midi.velocity = (float)note.amplitude; // Notes::Event uses 'amplitude'
     midi.centOffset = 0.0f; // NeuralNote handles pitch internally
     midiNotes.push_back(midi);
   }
+
+  DBG("MidiNotes created: " + juce::String(midiNotes.size()));
 
   return midiNotes;
 }
 
 // ---------------------------------------------------------------------------
 // Playback
-// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
 
-void Sample2MidiAudioProcessor::startPlayback() {
+void Sample2MidiAudioProcessor::startPlayback(double positionSeconds) {
   if (readerSource != nullptr) {
-    transportSource.setPosition(0.0);
+    transportSource.setPosition(positionSeconds);
     transportSource.start();
   }
 }
 
-void Sample2MidiAudioProcessor::stopPlayback() {
-  transportSource.stop();
-  transportSource.setPosition(0.0);
+void Sample2MidiAudioProcessor::setPlaybackPosition(double positionSeconds) {
+  if (transportSource.isPlaying()) {
+    transportSource.setPosition(positionSeconds);
+  }
 }
+
+void Sample2MidiAudioProcessor::stopPlayback() { transportSource.stop(); }
 
 bool Sample2MidiAudioProcessor::isPlaybackActive() const {
   return transportSource.isPlaying();
@@ -351,6 +362,20 @@ void Sample2MidiAudioProcessor::runAnalysisInternal() {
   if (!localBuffer)
     return;
 
+  // ======== DEBUG LOGGING ========
+  DBG("=== Analysis Started ===");
+  DBG("Buffer size: " + juce::String(localBuffer->getNumSamples()));
+  DBG("Sample rate: " + juce::String(localSampleRate));
+  DBG("Channels: " + juce::String(localBuffer->getNumChannels()));
+
+  float rmsTotal = 0;
+  const float *data = localBuffer->getReadPointer(0);
+  for (int i = 0; i < localBuffer->getNumSamples(); i++)
+    rmsTotal += data[i] * data[i];
+  rmsTotal = sqrt(rmsTotal / localBuffer->getNumSamples());
+  DBG("Overall RMS: " + juce::String(rmsTotal));
+  // ======== END DEBUG ========
+
   // BPM detection on background thread (not UI thread)
   float bpm = detectBPMFromAudio(*localBuffer, localSampleRate);
   detectedBPM.store(bpm);
@@ -358,6 +383,11 @@ void Sample2MidiAudioProcessor::runAnalysisInternal() {
                            juce::String(bpm));
 
   auto notes = analyzeBuffer(*localBuffer, localSampleRate);
+
+  // ======== DEBUG LOGGING ========
+  DBG("Notes after analyzeBuffer: " + juce::String(notes.size()));
+  // ======== END DEBUG ========
+
   if (shouldStopAnalysis || analysisThread->threadShouldExit())
     return;
   juce::MessageManager::callAsync([this, notes]() mutable {

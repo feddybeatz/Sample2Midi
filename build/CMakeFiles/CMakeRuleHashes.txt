@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+7b1b0ca4579ae940f2ec0c83eb919837 Sample2MIDI_artefacts/JuceLibraryCode/JuceHeader.h
+b5a0801d1a6619b8f582cc6bdba8ef7b juce_binarydata_bin_data/JuceLibraryCode/BinaryData1.cpp

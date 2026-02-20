@@ -176,7 +176,39 @@ private:
   // Components
   // -------------------------------------------------------------------------
 
-  // Status bar
+  // Status bar with pulsing dot
+  struct StatusDot : public juce::Component {
+    bool isActive = false;
+    float pulsePhase = 0.0f;
+
+    void paint(juce::Graphics &g) override {
+      auto center = getLocalBounds().getCentre();
+      float radius = 5.0f;
+
+      if (isActive) {
+        // Green glowing dot
+        g.setColour(Colors::successGreen);
+        g.fillEllipse(center.x - radius, center.y - radius, radius * 2,
+                      radius * 2);
+        // Glow effect
+        g.setColour(Colors::successGreen.withAlpha(0.3f));
+        g.fillEllipse(center.x - radius * 2, center.y - radius * 2, radius * 4,
+                      radius * 4);
+      } else {
+        // Grey pulsing dot
+        float alpha = 0.5f + 0.5f * std::sin(pulsePhase);
+        g.setColour(Colors::textGray.withAlpha(alpha));
+        g.fillEllipse(center.x - radius, center.y - radius, radius * 2,
+                      radius * 2);
+      }
+    }
+
+    void timerCallback() {
+      pulsePhase += 0.35f; // ~0.8s period
+      repaint();
+    }
+  } statusDot;
+
   juce::Label statusLabel;
   juce::TextButton loadButton{"Load Sample"};
 

@@ -24,4 +24,4 @@ static constexpr int CONTOURS_BINS_PER_SEMITONE = 3;
 static constexpr int MIN_MIDI_NOTE = 21;
 static constexpr int MAX_MIDI_NOTE = 108;
 
-#endif //NN_CONSTANTS_H
+#endif // NN_CONSTANTS_H

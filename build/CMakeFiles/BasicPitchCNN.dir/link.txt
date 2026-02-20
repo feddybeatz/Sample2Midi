@@ -1,0 +1,2 @@
+/usr/bin/ar qc libBasicPitchCNN.a CMakeFiles/BasicPitchCNN.dir/NeuralModel/BasicPitchCNN.cpp.o
+/usr/bin/ranlib libBasicPitchCNN.a

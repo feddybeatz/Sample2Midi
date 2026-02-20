@@ -1,0 +1,5 @@
+/home/feddy/projects/Sample2MIDI/Models/ModelData/cnn_contour_model.json
+/home/feddy/projects/Sample2MIDI/Models/ModelData/cnn_note_model.json
+/home/feddy/projects/Sample2MIDI/Models/ModelData/cnn_onset_1_model.json
+/home/feddy/projects/Sample2MIDI/Models/ModelData/cnn_onset_2_model.json
+/home/feddy/projects/Sample2MIDI/Models/ModelData/features_model.onnx

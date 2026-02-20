@@ -1,15 +1,12 @@
 #include "PitchDetector.h"
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
-float PitchDetector::detectPitch(const float *buffer, int numSamples,
-                                 double sampleRate) {
-  return yinPitch(buffer, numSamples, sampleRate);
-}
-
-float PitchDetector::yinPitch(const float *buffer, int bufferSize,
-                              double rate) {
-  const float threshold = 0.15f;
+float PitchDetector::detectPitch(const float *buffer, int bufferSize,
+                                 double rate) {
+  // Simple YIN-like pitch detection for scale detection
+  const float threshold = 0.1f;
   const int minPeriod = (int)(rate / 1000.0f); // Max freq 1000Hz
   const int maxPeriod = (int)(rate / 50.0f);   // Min freq 50Hz
 
@@ -48,7 +45,6 @@ float PitchDetector::yinPitch(const float *buffer, int bufferSize,
   }
 
   if (tauEstimate == -1) {
-    // No pitch found, find minimum
     float minVal = yinBuffer[minPeriod];
     tauEstimate = minPeriod;
     for (int tau = minPeriod + 1; tau <= maxPeriod; tau++) {
@@ -63,151 +59,116 @@ float PitchDetector::yinPitch(const float *buffer, int bufferSize,
     return -1.0f;
 
   // Step 4: Parabolic interpolation
-  float betterTau = tauEstimate;
   float s0 = yinBuffer[tauEstimate - 1];
   float s1 = yinBuffer[tauEstimate];
   float s2 = yinBuffer[tauEstimate + 1];
-  betterTau += (s2 - s0) / (2 * (2 * s1 - s2 - s0));
+  float betterTau = tauEstimate + (s2 - s0) / (2.0f * (2.0f * s1 - s2 - s0));
 
   float frequency = rate / betterTau;
 
   // Convert to MIDI note
   if (frequency > 20.0f && frequency < 5000.0f) {
-    float midiNote = 69.0f + 12.0f * std::log2(frequency / 440.0f);
-    return midiNote;
+    return 69.0f + 12.0f * std::log2(frequency / 440.0f);
   }
 
   return -1.0f;
 }
 
-std::vector<Note>
-PitchDetector::analyze(const juce::AudioBuffer<float> &buffer) {
-  std::vector<Note> notes;
+std::vector<Notes::Event>
+PitchDetector::analyze(const juce::AudioBuffer<float> &buffer,
+                       double sampleRate) {
+  // Prepare audio: convert to mono and resample to 22050 Hz (required by
+  // BasicPitch)
+  auto preparedAudio = prepareAudio(buffer, sampleRate);
 
-  const float *channelData = buffer.getReadPointer(0);
-  int numSamples = buffer.getNumSamples();
-  double rate = sampleRate > 0 ? sampleRate : 44100.0; // Default to 44.1kHz
-
-  // Process in windows - increased to 8192 for better low frequency
-  const int windowSize = 8192;
-  const int hopSize = 2048;
-
-  float prevMidiNote = -1.0f;
-  float noteStart = 0.0f;
-  float lastVelocity = 0.8f;
-
-  // Confirmation buffer for note smoothing (3 consecutive frames)
-  std::vector<int> confirmationBuffer;
-  int confirmedNote = -1;
-
-  for (int i = 0; i < numSamples - windowSize; i += hopSize) {
-    // 1. SILENCE GATE - Skip detection in silent sections
-    float rms = 0;
-    for (int j = 0; j < windowSize; j++) {
-      rms += channelData[i + j] * channelData[i + j];
-    }
-    rms = std::sqrt(rms / windowSize);
-
-    float midiNote = -1.0f;
-
-    if (rms >= 0.015f) { // Not silent
-      midiNote = yinPitch(channelData + i, windowSize, rate);
-
-      // 2. OCTAVE CORRECTION - Fix wrong octave detection
-      if (midiNote > 0 && prevMidiNote > 0) {
-        while (midiNote - prevMidiNote > 6)
-          midiNote -= 12;
-        while (prevMidiNote - midiNote > 6)
-          midiNote += 12;
-      }
-
-      // 3. NOTE SMOOTHING - Require 3 consecutive frames
-      if (midiNote > 0) {
-        int noteInt = (int)(midiNote + 0.5f);
-        confirmationBuffer.push_back(noteInt);
-        if (confirmationBuffer.size() > 3) {
-          confirmationBuffer.erase(confirmationBuffer.begin());
-        }
-
-        // Check if we have 3 consecutive same notes
-        if (confirmationBuffer.size() >= 3) {
-          if (confirmationBuffer[0] == confirmationBuffer[1] &&
-              confirmationBuffer[1] == confirmationBuffer[2]) {
-            confirmedNote = confirmationBuffer[0];
-          }
-        }
-      } else {
-        confirmationBuffer.clear();
-        confirmedNote = -1;
-      }
-    } else {
-      // Silent frame - clear buffer
-      confirmationBuffer.clear();
-      confirmedNote = -1;
-    }
-
-    if (confirmedNote > 0) {
-      float currentNote = (float)confirmedNote;
-
-      // Note onset detection
-      if (prevMidiNote < 0 || confirmedNote != (int)(prevMidiNote + 0.5f)) {
-        if (prevMidiNote > 0) {
-          // End previous note
-          Note note;
-          note.midiNote = (int)(prevMidiNote + 0.5f);
-          note.startTime = noteStart;
-          note.endTime = (float)i / rate;
-
-          // 4. VELOCITY FROM AMPLITUDE
-          note.velocity = std::sqrt(rms) * 127.0f * 6.0f;
-          note.velocity = juce::jlimit(0.1f, 1.0f, note.velocity);
-
-          // 5. MINIMUM NOTE LENGTH - 80ms minimum
-          if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
-              note.midiNote <= 108) {
-            notes.push_back(note);
-          }
-        }
-        // Start new note
-        noteStart = (float)i / rate;
-      }
-      lastVelocity = std::sqrt(rms) * 127.0f * 6.0f;
-      lastVelocity = juce::jlimit(0.1f, 1.0f, lastVelocity);
-      prevMidiNote = currentNote;
-    } else {
-      // End current note if there was one
-      if (prevMidiNote > 0) {
-        Note note;
-        note.midiNote = (int)(prevMidiNote + 0.5f);
-        note.startTime = noteStart;
-        note.endTime = (float)i / rate;
-        note.velocity = lastVelocity;
-
-        // 5. MINIMUM NOTE LENGTH - 80ms minimum
-        if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
-            note.midiNote <= 108) {
-          notes.push_back(note);
-        }
-      }
-      prevMidiNote = -1.0f;
-      confirmationBuffer.clear();
-    }
+  if (preparedAudio.empty()) {
+    return {};
   }
 
-  // Don't forget the last note
-  if (prevMidiNote > 0 && numSamples > windowSize) {
-    Note note;
-    note.midiNote = (int)(prevMidiNote + 0.5f);
-    note.startTime = noteStart;
-    note.endTime = (float)numSamples / rate;
-    note.velocity = lastVelocity;
+  // Reset BasicPitch for new transcription
+  basicPitch.reset();
 
-    // 5. MINIMUM NOTE LENGTH - 80ms minimum
-    if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
-        note.midiNote <= 108) {
+  // Run transcription
+  basicPitch.transcribeToMIDI(preparedAudio.data(), (int)preparedAudio.size());
+
+  // Update MIDI with current parameters
+  basicPitch.updateMIDI();
+
+  // Return the note events
+  return basicPitch.getNoteEvents();
+}
+
+std::vector<PitchDetector::Note>
+PitchDetector::analyzeSimple(const juce::AudioBuffer<float> &buffer,
+                             double sampleRate) {
+  std::vector<Note> notes;
+
+  // Get the neural network note events
+  auto events = analyze(buffer, sampleRate);
+
+  // Convert Notes::Event to simpler Note struct
+  for (const auto &event : events) {
+    Note note;
+    note.midiNote = event.pitch;
+    note.startTime = (float)event.startTime;
+    note.endTime = (float)event.endTime;
+    note.velocity = (float)std::min(1.0, event.amplitude * 127.0f / 127.0f);
+
+    // Only include valid MIDI notes
+    if (note.midiNote >= 21 && note.midiNote <= 108) {
       notes.push_back(note);
     }
   }
 
   return notes;
+}
+
+std::vector<float>
+PitchDetector::prepareAudio(const juce::AudioBuffer<float> &buffer,
+                            double sourceSampleRate) {
+  std::vector<float> result;
+
+  // Mix to mono
+  int numSamples = buffer.getNumSamples();
+  std::vector<float> monoBuffer(numSamples);
+
+  if (buffer.getNumChannels() > 1) {
+    // Average all channels
+    for (int i = 0; i < numSamples; i++) {
+      float sum = 0.0f;
+      for (int ch = 0; ch < buffer.getNumChannels(); ch++) {
+        sum += buffer.getReadPointer(ch)[i];
+      }
+      monoBuffer[i] = sum / buffer.getNumChannels();
+    }
+  } else {
+    // Single channel - just copy
+    std::copy(buffer.getReadPointer(0), buffer.getReadPointer(0) + numSamples,
+              monoBuffer.begin());
+  }
+
+  // Resample to 22050 Hz if needed (BasicPitch requires 22050 Hz)
+  const int targetSampleRate = 22050;
+
+  if (std::abs(sourceSampleRate - targetSampleRate) < 1.0) {
+    // No resampling needed
+    return monoBuffer;
+  }
+
+  // Simple linear interpolation resampling
+  double ratio = sourceSampleRate / (double)targetSampleRate;
+  int targetLength = (int)(numSamples / ratio);
+  result.resize(targetLength);
+
+  for (int i = 0; i < targetLength; i++) {
+    double sourcePos = i * ratio;
+    int idx1 = (int)sourcePos;
+    int idx2 = std::min(idx1 + 1, numSamples - 1);
+    double frac = sourcePos - idx1;
+
+    result[i] =
+        (float)(monoBuffer[idx1] * (1.0 - frac) + monoBuffer[idx2] * frac);
+  }
+
+  return result;
 }

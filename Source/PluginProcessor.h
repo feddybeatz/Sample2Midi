@@ -72,8 +72,9 @@ public:
   // Playback (preview the loaded audio)
   // -----------------------------------------------------------------------
 
-  void startPlayback();
+  void startPlayback(double positionSeconds = 0.0);
   void stopPlayback();
+  void setPlaybackPosition(double positionSeconds);
   bool isPlaybackActive() const;
   double getTransportSourcePosition() const;
 
