@@ -3,48 +3,56 @@
 #include <cmath>
 #include <utility>
 
-SpectralDisplay::SpectralDisplay() { magnitudes.resize(128, 0.0f); }
+SpectralDisplay::SpectralDisplay() {
+  magnitudes.resize(128, 0.0f);
+  fifo.fill(0);
+  scopeData.fill(0);
+}
+
+void SpectralDisplay::pushBuffer(const float *data, int numSamples) {
+  for (int i = 0; i < numSamples; i++) {
+    if (fifoIndex == fftSize) {
+      // Copy fifo to fftData
+      std::copy(fifo.begin(), fifo.end(), fftData.begin());
+
+      // Apply windowing function
+      window.multiplyWithWindowingTable(fftData.data(), fftSize);
+
+      // Perform FFT
+      forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());
+
+      // Copy magnitude data to scopeData
+      for (int j = 0; j < fftSize; j++) {
+        scopeData[j] = fftData[j];
+      }
+
+      nextFFTBlockReady = true;
+      fifoIndex = 0;
+    }
+    fifo[fifoIndex++] = data[i];
+  }
+}
 
 void SpectralDisplay::setAudioData(const float *data, int numSamples,
                                    double rate) {
   sampleRate = rate;
+  magnitudes.resize(128, 0.0f);
+  fifoIndex = 0;
+  nextFFTBlockReady = false;
+  fifo.fill(0);
 
-  const int numBins = 128;
-  magnitudes.resize(numBins, 0.0f);
+  // Push entire buffer through FFT
+  pushBuffer(data, numSamples);
 
-  if (numSamples < 1024)
-    return;
-
-  const int windowSize = 4096;
-  if (numSamples < windowSize)
-    return;
-
-  int numWindows = numSamples / windowSize;
-  std::vector<float> avgMagnitudes(numBins, 0.0f);
-
-  for (int w = 0; w < numWindows; ++w) {
-    const float *window = data + w * windowSize;
-
-    for (int bin = 0; bin < numBins; ++bin) {
-      float freq = (float)bin * sampleRate / windowSize;
-      if (freq < 20.0f || freq > 5000.0f)
-        continue;
-
-      float real = 0, imag = 0;
-      for (int i = 0; i < windowSize; i += 4) {
-        float phase = 2.0f * 3.14159f * freq * i / sampleRate;
-        real += window[i] * std::cos(phase);
-        imag += window[i] * std::sin(phase);
-      }
-      avgMagnitudes[bin] += std::sqrt(real * real + imag * imag);
-    }
+  // Copy scopeData to magnitudes for display (use first 128 bins)
+  for (int i = 0; i < 128 && i < fftSize; i++) {
+    magnitudes[i] = scopeData[i];
   }
 
-  for (int bin = 0; bin < numBins; ++bin) {
-    magnitudes[bin] = avgMagnitudes[bin] / (float)numWindows;
+  if (nextFFTBlockReady) {
+    detectChord();
+    nextFFTBlockReady = false;
   }
-
-  detectChord();
   repaint();
 }
 
@@ -64,13 +72,21 @@ void SpectralDisplay::paint(juce::Graphics &g) {
       maxMag = m;
   }
 
+  // Draw frequency bars in cyan #00E5FF
   for (int i = 0; i < numBars; ++i) {
     float height = (magnitudes[i] / maxMag) * barArea.getHeight();
     height = std::min(height, (float)barArea.getHeight());
 
-    float hue = (float)i / numBars;
-    g.setColour(juce::Colour::fromHSV(hue * 0.7f, 0.8f, 0.8f, 1.0f));
+    // Use cyan color #00E5FF
+    g.setColour(juce::Colour(0xff00e5ff));
 
+    // Add glow effect by drawing twice
+    g.setColour(juce::Colour(0x4000e5ff));
+    g.fillRect(barArea.getX() + i * barWidth, barArea.getBottom() - height,
+               barWidth, height);
+
+    // Main bar
+    g.setColour(juce::Colour(0xff00e5ff));
     g.fillRect(barArea.getX() + i * barWidth, barArea.getBottom() - height,
                barWidth - 1, height);
   }
@@ -97,11 +113,15 @@ void SpectralDisplay::paint(juce::Graphics &g) {
 void SpectralDisplay::detectChord() {
   std::vector<std::pair<int, float>> peaks;
 
-  for (int i = 1; i < (int)magnitudes.size() - 1; ++i) {
+  // Find peaks in the magnitude spectrum (bins 1-64 for better resolution)
+  for (int i = 1; i < 64 && i < (int)magnitudes.size() - 1; ++i) {
     if (magnitudes[i] > magnitudes[i - 1] &&
-        magnitudes[i] > magnitudes[i + 1] && magnitudes[i] > 0.1f) {
-      float freq = (float)i * sampleRate / 4096.0f;
-      peaks.push_back({i, freq});
+        magnitudes[i] > magnitudes[i + 1] && magnitudes[i] > 0.05f) {
+      // Calculate frequency from bin
+      float freq = (float)i * sampleRate / (float)fftSize;
+      if (freq > 50.0f && freq < 2000.0f) { // Focus on audible range
+        peaks.push_back({i, freq});
+      }
     }
   }
 
@@ -109,15 +129,17 @@ void SpectralDisplay::detectChord() {
     return magnitudes[a.first] > magnitudes[b.first];
   });
 
-  if (peaks.size() < 3) {
-    if (peaks.empty()) {
-      currentChord = juce::String("No chord detected");
-    } else {
-      currentChord = freqToNoteName(peaks[0].second);
-    }
+  if (peaks.empty()) {
+    currentChord = juce::String("No chord detected");
     return;
   }
 
+  if (peaks.size() < 3) {
+    currentChord = freqToNoteName(peaks[0].second);
+    return;
+  }
+
+  // Take top 3 peaks for chord detection
   std::vector<int> midiNotes;
   for (int i = 0; i < 3 && i < (int)peaks.size(); ++i) {
     midiNotes.push_back(freqToMIDI(peaks[i].second));
@@ -158,12 +180,17 @@ void SpectralDisplay::detectChord() {
     } else if (has4 && has7 &&
                std::find(intervals.begin(), intervals.end(), 11) !=
                    intervals.end()) {
-      currentChord = juce::String(noteNames[root]) + " Maj7";
+      currentChord = juce::String(noteNames[root]) + "Maj7";
     } else if (has3 && has7 &&
                std::find(intervals.begin(), intervals.end(), 10) !=
                    intervals.end()) {
-      currentChord = juce::String(noteNames[root]) + " m7";
+      currentChord = juce::String(noteNames[root]) + "m7";
+    } else if (has3 && has7 &&
+               std::find(intervals.begin(), intervals.end(), 11) !=
+                   intervals.end()) {
+      currentChord = juce::String(noteNames[root]) + "mMaj7";
     } else {
+      // Just show the notes
       currentChord = freqToNoteName(peaks[0].second);
     }
   }
@@ -171,20 +198,20 @@ void SpectralDisplay::detectChord() {
 
 juce::String SpectralDisplay::freqToNoteName(float freq) const {
   if (freq <= 0)
-    return juce::String("--");
+    return juce::String("---");
 
-  int midi = freqToMIDI(freq);
+  float midi = 69.0f + 12.0f * std::log2(freq / 440.0f);
+  int noteNum = (int)std::round(midi) % 12;
+
   const char *noteNames[] = {"C",  "C#", "D",  "D#", "E",  "F",
                              "F#", "G",  "G#", "A",  "A#", "B"};
+  int octave = (int)midi / 12 - 1;
 
-  int octave = midi / 12 - 1;
-  int note = midi % 12;
-
-  return juce::String(noteNames[note]) + juce::String(octave);
+  return juce::String(noteNames[noteNum]) + juce::String(octave);
 }
 
 int SpectralDisplay::freqToMIDI(float freq) const {
   if (freq <= 0)
-    return -1;
-  return (int)std::round(69.0 + 12.0 * std::log2(freq / 440.0));
+    return 0;
+  return (int)std::round(69.0f + 12.0f * std::log2(freq / 440.0f));
 }

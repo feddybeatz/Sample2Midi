@@ -1,80 +1,213 @@
 #include "PitchDetector.h"
-#include <algorithm>
 #include <cmath>
-#include <numeric>
 #include <vector>
 
 float PitchDetector::detectPitch(const float *buffer, int numSamples,
                                  double sampleRate) {
-  // Step 1: Normalized Square Difference Function (NSDF)
-  int n = numSamples;
-  std::vector<float> nsdf(n, 0.0f);
+  return yinPitch(buffer, numSamples, sampleRate);
+}
 
-  for (int tau = 0; tau < n; tau++) {
-    float acf = 0.0f, m = 0.0f;
-    for (int i = 0; i < n - tau; i++) {
-      acf += buffer[i] * buffer[i + tau];
-      m += buffer[i] * buffer[i] + buffer[i + tau] * buffer[i + tau];
-    }
-    nsdf[tau] = (m == 0.0f) ? 0.0f : 2.0f * acf / m;
-  }
+float PitchDetector::yinPitch(const float *buffer, int bufferSize,
+                              double rate) {
+  const float threshold = 0.15f;
+  const int minPeriod = (int)(rate / 1000.0f); // Max freq 1000Hz
+  const int maxPeriod = (int)(rate / 50.0f);   // Min freq 50Hz
 
-  // Step 2: Find key maximum after first zero crossing
-  std::vector<int> maxPositions;
-  int pos = 0;
-  while (pos < n - 1 && nsdf[pos] > 0)
-    pos++; // skip to first zero
-  while (pos < n - 1 && nsdf[pos] <= 0)
-    pos++; // skip negative region
-
-  float curMax = 0.0f;
-  int curMaxPos = pos;
-
-  for (int i = pos; i < n - 1; i++) {
-    if (nsdf[i] > nsdf[i - 1] && nsdf[i] >= nsdf[i + 1]) {
-      if (nsdf[i] > curMax) {
-        curMax = nsdf[i];
-        curMaxPos = i;
-      }
-    }
-    if (nsdf[i] < 0 && curMax > 0) {
-      maxPositions.push_back(curMaxPos);
-      curMax = 0.0f;
-    }
-  }
-
-  if (maxPositions.empty())
+  if (bufferSize < maxPeriod * 2)
     return -1.0f;
 
-  // Step 3: Pick highest peak above threshold * globalMax
-  float globalMax = *std::max_element(nsdf.begin(), nsdf.end());
-  float threshold = 0.8f;
+  std::vector<float> yinBuffer(maxPeriod + 1, 0.0f);
 
-  int bestTau = -1;
-  for (int mp : maxPositions) {
-    if (nsdf[mp] >= threshold * globalMax) {
-      bestTau = mp;
+  // Step 1: Difference function
+  for (int tau = 0; tau <= maxPeriod; tau++) {
+    yinBuffer[tau] = 0.0f;
+    for (int i = 0; i < bufferSize - maxPeriod; i++) {
+      float delta = buffer[i] - buffer[i + tau];
+      yinBuffer[tau] += delta * delta;
+    }
+  }
+
+  // Step 2: Cumulative mean normalized difference
+  yinBuffer[0] = 1.0f;
+  float runningSum = 0.0f;
+  for (int tau = 1; tau <= maxPeriod; tau++) {
+    runningSum += yinBuffer[tau];
+    yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+  }
+
+  // Step 3: Absolute threshold
+  int tauEstimate = -1;
+  for (int tau = minPeriod; tau <= maxPeriod; tau++) {
+    if (yinBuffer[tau] < threshold) {
+      while (tau + 1 <= maxPeriod && yinBuffer[tau + 1] < yinBuffer[tau]) {
+        tau++;
+      }
+      tauEstimate = tau;
       break;
     }
   }
 
-  if (bestTau < 1 || bestTau >= n - 1)
+  if (tauEstimate == -1) {
+    // No pitch found, find minimum
+    float minVal = yinBuffer[minPeriod];
+    tauEstimate = minPeriod;
+    for (int tau = minPeriod + 1; tau <= maxPeriod; tau++) {
+      if (yinBuffer[tau] < minVal) {
+        minVal = yinBuffer[tau];
+        tauEstimate = tau;
+      }
+    }
+  }
+
+  if (tauEstimate <= 0 || tauEstimate >= maxPeriod)
     return -1.0f;
 
-  // Step 4: Parabolic interpolation for sub-sample accuracy
-  float s0 = nsdf[bestTau - 1];
-  float s1 = nsdf[bestTau];
-  float s2 = nsdf[bestTau + 1];
-  float refinedTau = bestTau + (s2 - s0) / (2.0f * (2.0f * s1 - s2 - s0));
+  // Step 4: Parabolic interpolation
+  float betterTau = tauEstimate;
+  float s0 = yinBuffer[tauEstimate - 1];
+  float s1 = yinBuffer[tauEstimate];
+  float s2 = yinBuffer[tauEstimate + 1];
+  betterTau += (s2 - s0) / (2 * (2 * s1 - s2 - s0));
 
-  if (refinedTau <= 0)
-    return -1.0f;
+  float frequency = rate / betterTau;
 
-  // Step 5: Convert to MIDI note
-  float freq = (float)sampleRate / refinedTau;
-  if (freq < 50.0f || freq > 2000.0f)
-    return -1.0f; // outside musical range
+  // Convert to MIDI note
+  if (frequency > 20.0f && frequency < 5000.0f) {
+    float midiNote = 69.0f + 12.0f * std::log2(frequency / 440.0f);
+    return midiNote;
+  }
 
-  float midiNote = 69.0f + 12.0f * log2f(freq / 440.0f);
-  return midiNote;
+  return -1.0f;
+}
+
+std::vector<Note>
+PitchDetector::analyze(const juce::AudioBuffer<float> &buffer) {
+  std::vector<Note> notes;
+
+  const float *channelData = buffer.getReadPointer(0);
+  int numSamples = buffer.getNumSamples();
+  double rate = sampleRate > 0 ? sampleRate : buffer.getSampleRate();
+
+  // Process in windows - increased to 8192 for better low frequency
+  const int windowSize = 8192;
+  const int hopSize = 2048;
+
+  float prevMidiNote = -1.0f;
+  float noteStart = 0.0f;
+  float lastVelocity = 0.8f;
+
+  // Confirmation buffer for note smoothing (3 consecutive frames)
+  std::vector<int> confirmationBuffer;
+  int confirmedNote = -1;
+
+  for (int i = 0; i < numSamples - windowSize; i += hopSize) {
+    // 1. SILENCE GATE - Skip detection in silent sections
+    float rms = 0;
+    for (int j = 0; j < windowSize; j++) {
+      rms += channelData[i + j] * channelData[i + j];
+    }
+    rms = std::sqrt(rms / windowSize);
+
+    float midiNote = -1.0f;
+
+    if (rms >= 0.015f) { // Not silent
+      midiNote = yinPitch(channelData + i, windowSize, rate);
+
+      // 2. OCTAVE CORRECTION - Fix wrong octave detection
+      if (midiNote > 0 && prevMidiNote > 0) {
+        while (midiNote - prevMidiNote > 6)
+          midiNote -= 12;
+        while (prevMidiNote - midiNote > 6)
+          midiNote += 12;
+      }
+
+      // 3. NOTE SMOOTHING - Require 3 consecutive frames
+      if (midiNote > 0) {
+        int noteInt = (int)(midiNote + 0.5f);
+        confirmationBuffer.push_back(noteInt);
+        if (confirmationBuffer.size() > 3) {
+          confirmationBuffer.erase(confirmationBuffer.begin());
+        }
+
+        // Check if we have 3 consecutive same notes
+        if (confirmationBuffer.size() >= 3) {
+          if (confirmationBuffer[0] == confirmationBuffer[1] &&
+              confirmationBuffer[1] == confirmationBuffer[2]) {
+            confirmedNote = confirmationBuffer[0];
+          }
+        }
+      } else {
+        confirmationBuffer.clear();
+        confirmedNote = -1;
+      }
+    } else {
+      // Silent frame - clear buffer
+      confirmationBuffer.clear();
+      confirmedNote = -1;
+    }
+
+    if (confirmedNote > 0) {
+      float currentNote = (float)confirmedNote;
+
+      // Note onset detection
+      if (prevMidiNote < 0 || confirmedNote != (int)(prevMidiNote + 0.5f)) {
+        if (prevMidiNote > 0) {
+          // End previous note
+          Note note;
+          note.midiNote = (int)(prevMidiNote + 0.5f);
+          note.startTime = noteStart;
+          note.endTime = (float)i / rate;
+
+          // 4. VELOCITY FROM AMPLITUDE
+          note.velocity = std::sqrt(rms) * 127.0f * 6.0f;
+          note.velocity = juce::jlimit(0.1f, 1.0f, note.velocity);
+
+          // 5. MINIMUM NOTE LENGTH - 80ms minimum
+          if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
+              note.midiNote <= 108) {
+            notes.push_back(note);
+          }
+        }
+        // Start new note
+        noteStart = (float)i / rate;
+      }
+      lastVelocity = std::sqrt(rms) * 127.0f * 6.0f;
+      lastVelocity = juce::jlimit(0.1f, 1.0f, lastVelocity);
+      prevMidiNote = currentNote;
+    } else {
+      // End current note if there was one
+      if (prevMidiNote > 0) {
+        Note note;
+        note.midiNote = (int)(prevMidiNote + 0.5f);
+        note.startTime = noteStart;
+        note.endTime = (float)i / rate;
+        note.velocity = lastVelocity;
+
+        // 5. MINIMUM NOTE LENGTH - 80ms minimum
+        if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
+            note.midiNote <= 108) {
+          notes.push_back(note);
+        }
+      }
+      prevMidiNote = -1.0f;
+      confirmationBuffer.clear();
+    }
+  }
+
+  // Don't forget the last note
+  if (prevMidiNote > 0 && numSamples > windowSize) {
+    Note note;
+    note.midiNote = (int)(prevMidiNote + 0.5f);
+    note.startTime = noteStart;
+    note.endTime = (float)numSamples / rate;
+    note.velocity = lastVelocity;
+
+    // 5. MINIMUM NOTE LENGTH - 80ms minimum
+    if ((note.endTime - note.startTime) >= 0.08f && note.midiNote >= 21 &&
+        note.midiNote <= 108) {
+      notes.push_back(note);
+    }
+  }
+
+  return notes;
 }

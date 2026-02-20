@@ -68,6 +68,11 @@ if(MSVC)
     )
 endif()
 
+# ONNX Runtime
+set(ONNXRUNTIME_DIR ${CMAKE_SOURCE_DIR}/onnxruntime)
+include_directories(${ONNXRUNTIME_DIR}/include)
+link_directories(${ONNXRUNTIME_DIR}/lib)
+
 target_link_libraries(Sample2MIDI PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices

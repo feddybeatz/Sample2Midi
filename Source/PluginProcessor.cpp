@@ -92,6 +92,11 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
         storedAudioBuffer =
             std::make_shared<juce::AudioBuffer<float>>(*sharedBuffer);
 
+        // Detect BPM from the loaded audio
+        detectedBPM = detectBPMFromAudio();
+        juce::Logger::writeToLog("Detected BPM: " +
+                                 juce::String(detectedBPM.load()));
+
         // Use JUCE thread for safe background analysis
         if (analysisThread != nullptr) {
           shouldStopAnalysis = true;
@@ -114,40 +119,25 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
 std::vector<MidiNote>
 Sample2MidiAudioProcessor::analyzeBuffer(const juce::AudioBuffer<float> &buffer,
                                          double sampleRate) {
-  const int windowSize = 4096;
-  const int hopSize = 2048;
-  const float *data = buffer.getReadPointer(0);
-  const int numSamples = buffer.getNumSamples();
+  // Prepare the neural pitch detector
+  pitchDetector.prepare(sampleRate);
 
-  std::vector<int> framePitches;
-  std::vector<float> frameAmps;
+  // Use NeuralNote to analyze the audio
+  auto notes = pitchDetector.analyze(buffer);
 
-  for (int i = 0; i < numSamples - windowSize; i += hopSize) {
-    float sum = 0.0f;
-    for (int j = 0; j < windowSize; ++j) {
-      float s = data[i + j];
-      sum += s * s;
-    }
-    float rms = std::sqrt(sum / windowSize);
-
-    if (rms > 0.001f) {
-      float midiNote =
-          pitchDetector.detectPitch(data + i, windowSize, sampleRate);
-      if (midiNote > 0) {
-        int midi = (int)std::round(midiNote);
-        framePitches.push_back(midi);
-        frameAmps.push_back(rms);
-      } else {
-        framePitches.push_back(-1);
-        frameAmps.push_back(0.0f);
-      }
-    } else {
-      framePitches.push_back(-1);
-      frameAmps.push_back(0.0f);
-    }
+  // Convert NeuralNote::Note to MidiNote
+  std::vector<MidiNote> midiNotes;
+  for (const auto &note : notes) {
+    MidiNote midi;
+    midi.noteNumber = note.midiNote;
+    midi.startSample = (int)(note.startTime * sampleRate);
+    midi.endSample = (int)(note.endTime * sampleRate);
+    midi.velocity = note.velocity;
+    midi.centOffset = 0.0f; // NeuralNote handles pitch internally
+    midiNotes.push_back(midi);
   }
 
-  return midiBuilder.buildNotes(framePitches, frameAmps, hopSize, sampleRate);
+  return midiNotes;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,16 +160,22 @@ bool Sample2MidiAudioProcessor::isPlaybackActive() const {
   return transportSource.isPlaying();
 }
 
+double Sample2MidiAudioProcessor::getTransportSourcePosition() const {
+  return transportSource.getCurrentPosition();
+}
+
 // -----------------------------------------------------------------------
 // Scale and BPM detection
 // -----------------------------------------------------------------------
 
 juce::String Sample2MidiAudioProcessor::detectScaleFromAudio() {
-  if (!storedAudioBuffer || storedAudioBuffer->getNumSamples() == 0)
-    return juce::String();
+  // Local copy prevents race condition if buffer is replaced
+  auto bufferCopy = storedAudioBuffer;
+  if (!bufferCopy || bufferCopy->getNumSamples() == 0)
+    return juce::String("C Major");
 
-  const float *data = storedAudioBuffer->getReadPointer(0);
-  int numSamples = storedAudioBuffer->getNumSamples();
+  const float *data = bufferCopy->getReadPointer(0);
+  int numSamples = bufferCopy->getNumSamples();
 
   // Collect pitch histogram
   std::map<int, int> pitchHistogram;
@@ -323,7 +319,8 @@ void Sample2MidiAudioProcessor::exportMidiToFile() {
                          auto result = fc.getResult();
                          if (result != juce::File{}) {
                            midiBuilder.exportMidi(detectedNotes,
-                                                  currentSampleRate, result);
+                                                  currentSampleRate, result,
+                                                  detectedBPM.load());
                          }
                        });
 }

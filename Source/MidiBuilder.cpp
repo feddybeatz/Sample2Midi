@@ -47,12 +47,20 @@ MidiBuilder::buildNotes(const std::vector<int> &framePitches,
 }
 
 void MidiBuilder::exportMidi(const std::vector<MidiNote> &notes,
-                             double sampleRate, const juce::File &file) {
+                             double sampleRate, const juce::File &file,
+                             float bpm) {
   juce::MidiFile midiFile;
+
+  // Add tempo track with detected BPM
+  int microsPerBeat = (int)(60000000.0 / bpm);
+  juce::MidiMessageSequence tempoTrack;
+  tempoTrack.addEvent(juce::MidiMessage::tempoMetaEvent(microsPerBeat), 0);
+  midiFile.addTrack(tempoTrack);
+
   juce::MidiMessageSequence seq;
 
-  // Ticks per second based on 120BPM
-  double ticksPerSecond = 960.0 * (120.0 / 60.0);
+  // Ticks per second based on detected BPM
+  double ticksPerSecond = 960.0 * (bpm / 60.0);
 
   for (const auto &note : notes) {
     double startTimeSec = (double)note.startSample / sampleRate;

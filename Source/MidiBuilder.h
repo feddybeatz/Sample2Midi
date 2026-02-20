@@ -18,7 +18,7 @@ public:
                                    const std::vector<float> &frameAmps,
                                    int hopSize, double sampleRate);
   void exportMidi(const std::vector<MidiNote> &notes, double sampleRate,
-                  const juce::File &file);
+                  const juce::File &file, float bpm = 120.0f);
   void performDragDrop(const std::vector<MidiNote> &notes, double sampleRate);
 
 private:

@@ -127,7 +127,8 @@ public:
 // ---------------------------------------------------------------------------
 class Sample2MidiAudioProcessorEditor : public juce::AudioProcessorEditor,
                                         public juce::FileDragAndDropTarget,
-                                        public juce::DragAndDropContainer {
+                                        public juce::DragAndDropContainer,
+                                        public juce::Timer {
 public:
   Sample2MidiAudioProcessorEditor(Sample2MidiAudioProcessor &);
   ~Sample2MidiAudioProcessorEditor() override;
@@ -137,6 +138,9 @@ public:
 
   bool isInterestedInFileDrag(const juce::StringArray &files) override;
   void filesDropped(const juce::StringArray &files, int x, int y) override;
+
+  // Timer for playhead updates
+  void timerCallback() override;
 
   void updateStatus(int noteCount);
 

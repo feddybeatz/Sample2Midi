@@ -49,6 +49,9 @@ public:
   }
   double getCurrentSampleRate() const { return currentSampleRate; }
   juce::AudioFormatManager &getFormatManager() { return formatManager; }
+  std::shared_ptr<juce::AudioBuffer<float>> getAudioBuffer() {
+    return storedAudioBuffer;
+  }
 
   // -----------------------------------------------------------------------
   // Scale and BPM detection
@@ -60,6 +63,9 @@ public:
   /** Auto-detect BPM from the loaded audio */
   double detectBPMFromAudio();
 
+  /** Detected BPM for MIDI export */
+  std::atomic<float> detectedBPM{120.0f};
+
   // -----------------------------------------------------------------------
   // Playback (preview the loaded audio)
   // -----------------------------------------------------------------------
@@ -67,6 +73,7 @@ public:
   void startPlayback();
   void stopPlayback();
   bool isPlaybackActive() const;
+  double getTransportSourcePosition() const;
 
   // -----------------------------------------------------------------------
   // MIDI export
