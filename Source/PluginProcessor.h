@@ -61,7 +61,8 @@ public:
   juce::String detectScaleFromAudio();
 
   /** Auto-detect BPM from the loaded audio */
-  double detectBPMFromAudio();
+  double detectBPMFromAudio(const juce::AudioBuffer<float> &buffer,
+                            double sampleRate);
 
   /** Detected BPM for MIDI export */
   std::atomic<float> detectedBPM{120.0f};

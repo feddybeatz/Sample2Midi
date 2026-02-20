@@ -92,11 +92,6 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
         storedAudioBuffer =
             std::make_shared<juce::AudioBuffer<float>>(*sharedBuffer);
 
-        // Detect BPM from the loaded audio
-        detectedBPM = detectBPMFromAudio();
-        juce::Logger::writeToLog("Detected BPM: " +
-                                 juce::String(detectedBPM.load()));
-
         // Use JUCE thread for safe background analysis
         if (analysisThread != nullptr) {
           shouldStopAnalysis = true;
@@ -171,8 +166,10 @@ double Sample2MidiAudioProcessor::getTransportSourcePosition() const {
 juce::String Sample2MidiAudioProcessor::detectScaleFromAudio() {
   // Local copy prevents race condition if buffer is replaced
   auto bufferCopy = storedAudioBuffer;
+
+  // Return empty string instead of false "C Major"
   if (!bufferCopy || bufferCopy->getNumSamples() == 0)
-    return juce::String("C Major");
+    return juce::String("");
 
   const float *data = bufferCopy->getReadPointer(0);
   int numSamples = bufferCopy->getNumSamples();
@@ -236,12 +233,14 @@ juce::String Sample2MidiAudioProcessor::detectScaleFromAudio() {
   }
 }
 
-double Sample2MidiAudioProcessor::detectBPMFromAudio() {
-  if (!storedAudioBuffer || storedAudioBuffer->getNumSamples() == 0)
+double Sample2MidiAudioProcessor::detectBPMFromAudio(
+    const juce::AudioBuffer<float> &buffer, double sampleRate) {
+  if (buffer.getNumSamples() == 0)
     return 120.0; // Default BPM
 
-  const float *data = storedAudioBuffer->getReadPointer(0);
-  int numSamples = storedAudioBuffer->getNumSamples();
+  const float *data = buffer.getReadPointer(0);
+  int numSamples = buffer.getNumSamples();
+  double rate = sampleRate;
 
   // Simple onset detection using energy difference
   const int blockSize = 1024;
@@ -347,6 +346,12 @@ void Sample2MidiAudioProcessor::runAnalysisInternal() {
 
   if (!localBuffer)
     return;
+
+  // BPM detection on background thread (not UI thread)
+  float bpm = detectBPMFromAudio(*localBuffer, localSampleRate);
+  detectedBPM.store(bpm);
+  juce::Logger::writeToLog("BPM detected on background thread: " +
+                           juce::String(bpm));
 
   auto notes = analyzeBuffer(*localBuffer, localSampleRate);
   if (shouldStopAnalysis || analysisThread->threadShouldExit())

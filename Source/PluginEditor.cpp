@@ -110,9 +110,17 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
       juce::MessageManager::callAsync([safeThis, detectedKey] {
         if (safeThis == nullptr)
           return;
-        safeThis->scaleDropdown.setText(detectedKey, juce::sendNotification);
-        safeThis->statusLabel.setText("Key detected: " + detectedKey,
-                                      juce::dontSendNotification);
+
+        if (detectedKey.empty()) {
+          safeThis->statusLabel.setText(
+              "Could not detect key — load a sample first",
+              juce::dontSendNotification);
+        } else {
+          safeThis->scaleDropdown.setText(detectedKey, juce::sendNotification);
+          safeThis->statusLabel.setText("Key detected: " + detectedKey,
+                                        juce::dontSendNotification);
+        }
+
         safeThis->autoDetectButton.setEnabled(true);
         safeThis->autoDetectButton.setButtonText(
             juce::String::fromUTF8("\xe2\x9c\xa8"));
