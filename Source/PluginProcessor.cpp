@@ -119,9 +119,10 @@ Sample2MidiAudioProcessor::analyzeBuffer(const juce::AudioBuffer<float> &buffer,
     float rms = std::sqrt(sum / windowSize);
 
     if (rms > 0.001f) {
-      float freq = pitchDetector.detectPitch(data + i, windowSize, sampleRate);
-      if (freq > 0.0f) {
-        int midi = (int)std::round(69.0 + 12.0 * std::log2(freq / 440.0));
+      float midiNote =
+          pitchDetector.detectPitch(data + i, windowSize, sampleRate);
+      if (midiNote > 0) {
+        int midi = (int)std::round(midiNote);
         framePitches.push_back(midi);
         frameAmps.push_back(rms);
       } else {
@@ -175,10 +176,10 @@ std::string Sample2MidiAudioProcessor::detectScaleFromAudio() {
   const int hopSize = 2048;
 
   for (int i = 0; i < numSamples - windowSize; i += hopSize) {
-    float freq =
+    float midiNote =
         pitchDetector.detectPitch(data + i, windowSize, currentSampleRate);
-    if (freq > 0) {
-      int midi = (int)std::round(69.0 + 12.0 * std::log2(freq / 440.0));
+    if (midiNote > 0) {
+      int midi = (int)std::round(midiNote);
       if (midi >= 0 && midi <= 127) {
         pitchHistogram[midi]++;
       }

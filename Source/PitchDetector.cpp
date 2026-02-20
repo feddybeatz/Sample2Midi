@@ -6,89 +6,75 @@
 
 float PitchDetector::detectPitch(const float *buffer, int numSamples,
                                  double sampleRate) {
-  return yinAlgorithm(buffer, numSamples, sampleRate);
-}
+  // Step 1: Normalized Square Difference Function (NSDF)
+  int n = numSamples;
+  std::vector<float> nsdf(n, 0.0f);
 
-float PitchDetector::yinAlgorithm(const float *buffer, int numSamples,
-                                  double sampleRate) {
-  int tauMax = numSamples / 2;
-  std::vector<float> yinBuffer(tauMax, 0.0f);
+  for (int tau = 0; tau < n; tau++) {
+    float acf = 0.0f, m = 0.0f;
+    for (int i = 0; i < n - tau; i++) {
+      acf += buffer[i] * buffer[i + tau];
+      m += buffer[i] * buffer[i] + buffer[i + tau] * buffer[i + tau];
+    }
+    nsdf[tau] = (m == 0.0f) ? 0.0f : 2.0f * acf / m;
+  }
 
-  // Step 1: Difference Function with Hann window
-  for (int tau = 1; tau < tauMax; ++tau) {
-    for (int i = 0; i < tauMax; ++i) {
-      float delta = buffer[i] - buffer[i + tau];
-      yinBuffer[tau] += delta * delta;
+  // Step 2: Find key maximum after first zero crossing
+  std::vector<int> maxPositions;
+  int pos = 0;
+  while (pos < n - 1 && nsdf[pos] > 0)
+    pos++; // skip to first zero
+  while (pos < n - 1 && nsdf[pos] <= 0)
+    pos++; // skip negative region
+
+  float curMax = 0.0f;
+  int curMaxPos = pos;
+
+  for (int i = pos; i < n - 1; i++) {
+    if (nsdf[i] > nsdf[i - 1] && nsdf[i] >= nsdf[i + 1]) {
+      if (nsdf[i] > curMax) {
+        curMax = nsdf[i];
+        curMaxPos = i;
+      }
+    }
+    if (nsdf[i] < 0 && curMax > 0) {
+      maxPositions.push_back(curMaxPos);
+      curMax = 0.0f;
     }
   }
 
-  // Step 2: Cumulative Mean Normalized Difference Function
-  yinBuffer[0] = 1.0f;
-  float runningSum = 0.0f;
-  for (int tau = 1; tau < tauMax; ++tau) {
-    runningSum += yinBuffer[tau];
-    if (runningSum > 0)
-      yinBuffer[tau] *= (float)tau / runningSum;
-    else
-      yinBuffer[tau] = 1.0f;
-  }
+  if (maxPositions.empty())
+    return -1.0f;
 
-  // Step 3: Absolute Threshold with adaptive threshold
-  int tauEstimate = -1;
-  float threshold = YIN_THRESHOLD;
+  // Step 3: Pick highest peak above threshold * globalMax
+  float globalMax = *std::max_element(nsdf.begin(), nsdf.end());
+  float threshold = 0.8f;
 
-  // First pass - try strict threshold
-  for (int tau = 2; tau < tauMax - 1; ++tau) {
-    if (yinBuffer[tau] < threshold) {
-      // Find local minimum
-      while (tau + 1 < tauMax - 1 && yinBuffer[tau + 1] < yinBuffer[tau]) {
-        tau++;
-      }
-      tauEstimate = tau;
+  int bestTau = -1;
+  for (int mp : maxPositions) {
+    if (nsdf[mp] >= threshold * globalMax) {
+      bestTau = mp;
       break;
     }
   }
 
-  // If not found, try with higher threshold
-  if (tauEstimate == -1) {
-    threshold = 0.5f;
-    for (int tau = 2; tau < tauMax - 1; ++tau) {
-      if (yinBuffer[tau] < threshold) {
-        while (tau + 1 < tauMax - 1 && yinBuffer[tau + 1] < yinBuffer[tau]) {
-          tau++;
-        }
-        tauEstimate = tau;
-        break;
-      }
-    }
-  }
-
-  if (tauEstimate == -1)
+  if (bestTau < 1 || bestTau >= n - 1)
     return -1.0f;
 
-  // Step 4: Parabolic Interpolation for better precision
-  float refinedTau = parabolicInterpolation(yinBuffer, tauEstimate);
+  // Step 4: Parabolic interpolation for sub-sample accuracy
+  float s0 = nsdf[bestTau - 1];
+  float s1 = nsdf[bestTau];
+  float s2 = nsdf[bestTau + 1];
+  float refinedTau = bestTau + (s2 - s0) / (2.0f * (2.0f * s1 - s2 - s0));
 
-  // Validate the result is in reasonable frequency range
+  if (refinedTau <= 0)
+    return -1.0f;
+
+  // Step 5: Convert to MIDI note
   float freq = (float)sampleRate / refinedTau;
-  if (freq < 20.0f || freq > 5000.0f)
-    return -1.0f;
+  if (freq < 50.0f || freq > 2000.0f)
+    return -1.0f; // outside musical range
 
-  return freq;
-}
-
-float PitchDetector::parabolicInterpolation(const std::vector<float> &yinBuffer,
-                                            int tauEstimate) {
-  if (tauEstimate > 0 && tauEstimate < (int)yinBuffer.size() - 1) {
-    float s0 = yinBuffer[tauEstimate - 1];
-    float s1 = yinBuffer[tauEstimate];
-    float s2 = yinBuffer[tauEstimate + 1];
-
-    float denominator = 2.0f * (s2 - 2.0f * s1 + s0);
-    if (std::abs(denominator) > 1e-6) {
-      float delta = (s0 - s2) / denominator;
-      return (float)tauEstimate + delta;
-    }
-  }
-  return (float)tauEstimate;
+  float midiNote = 69.0f + 12.0f * log2f(freq / 440.0f);
+  return midiNote;
 }
