@@ -67,7 +67,7 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
       if (buffer && buffer->getNumSamples() > 0) {
         spectralDisplay.setAudioData(buffer->getReadPointer(0),
                                      buffer->getNumSamples(),
-                                     buffer->getSampleRate());
+                                     audioProcessor.getCurrentSampleRate());
       }
 
       audioProcessor.loadAndAnalyze(
@@ -111,7 +111,7 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
         if (safeThis == nullptr)
           return;
 
-        if (detectedKey.empty()) {
+        if (detectedKey.isEmpty()) {
           safeThis->statusLabel.setText(
               "Could not detect key — load a sample first",
               juce::dontSendNotification);
@@ -527,7 +527,7 @@ void Sample2MidiAudioProcessorEditor::filesDropped(
   if (buffer && buffer->getNumSamples() > 0) {
     spectralDisplay.setAudioData(buffer->getReadPointer(0),
                                  buffer->getNumSamples(),
-                                 buffer->getSampleRate());
+                                 audioProcessor.getCurrentSampleRate());
   }
 
   audioProcessor.loadAndAnalyze(

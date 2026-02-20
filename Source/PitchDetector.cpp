@@ -86,7 +86,7 @@ PitchDetector::analyze(const juce::AudioBuffer<float> &buffer) {
 
   const float *channelData = buffer.getReadPointer(0);
   int numSamples = buffer.getNumSamples();
-  double rate = sampleRate > 0 ? sampleRate : buffer.getSampleRate();
+  double rate = sampleRate > 0 ? sampleRate : 44100.0; // Default to 44.1kHz
 
   // Process in windows - increased to 8192 for better low frequency
   const int windowSize = 8192;
