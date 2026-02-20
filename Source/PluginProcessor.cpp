@@ -336,7 +336,7 @@ juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
 // Internal analysis thread method
 // -----------------------------------------------------------------------
 void Sample2MidiAudioProcessor::runAnalysisInternal() {
-  if (shouldStopAnalysis || threadShouldExit())
+  if (shouldStopAnalysis || analysisThread->threadShouldExit())
     return;
 
   // Copy shared data under lock
@@ -352,7 +352,7 @@ void Sample2MidiAudioProcessor::runAnalysisInternal() {
     return;
 
   auto notes = analyzeBuffer(*localBuffer, localSampleRate);
-  if (shouldStopAnalysis || threadShouldExit())
+  if (shouldStopAnalysis || analysisThread->threadShouldExit())
     return;
   juce::MessageManager::callAsync([this, notes]() mutable {
     detectedNotes = std::move(notes);
