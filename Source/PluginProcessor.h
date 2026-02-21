@@ -45,6 +45,9 @@ public:
                       std::function<void(int noteCount)> onComplete = nullptr,
                       std::function<void()> onLoadComplete = nullptr);
 
+  /** Manually trigger the sample-to-MIDI analysis */
+  void processSample();
+
   const std::vector<MidiNote> &getDetectedNotes() const {
     return detectedNotes;
   }
@@ -52,30 +55,6 @@ public:
   juce::AudioFormatManager &getFormatManager() { return formatManager; }
   std::shared_ptr<juce::AudioBuffer<float>> getAudioBuffer() {
     return storedAudioBuffer;
-  }
-
-  // -----------------------------------------------------------------------
-  // Scale and BPM detection
-  // -----------------------------------------------------------------------
-
-  /** Auto-detect the musical scale from the loaded audio */
-  juce::String detectScaleFromAudio();
-
-  /** Auto-detect BPM from the loaded audio */
-  double detectBPMFromAudio(const juce::AudioBuffer<float> &buffer,
-                            double sampleRate);
-
-  /** Detected BPM for MIDI export */
-  std::atomic<float> detectedBPM{120.0f};
-
-  /** Chord mode active for MIDI export */
-  bool chordModeActive = false;
-
-  /** Filtered notes from note editor (for export) */
-  std::vector<MidiNote> filteredNotes;
-
-  void setFilteredNotes(const std::vector<MidiNote> &notes) {
-    filteredNotes = notes;
   }
 
   // -----------------------------------------------------------------------

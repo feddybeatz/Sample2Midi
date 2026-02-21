@@ -60,6 +60,9 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
     const juce::File &file, std::function<void(int noteCount)> onComplete,
     std::function<void()> onLoadComplete) {
 
+  // Clear previous notes when loading new sample
+  detectedNotes.clear();
+
   audioFileLoader.loadAsync(
       file, formatManager,
       [this, file, onComplete, onLoadComplete](juce::AudioBuffer<float> buffer,
@@ -88,31 +91,33 @@ void Sample2MidiAudioProcessor::loadAndAnalyze(
         if (onLoadComplete)
           onLoadComplete();
 
-        // Run pitch analysis on a background thread
+        // Store the buffer but don't analyze - user must click "Process"
         auto sharedBuffer =
             std::make_shared<juce::AudioBuffer<float>>(std::move(buffer));
 
-        // Store the buffer for scale/BPM detection
         storedAudioBuffer =
             std::make_shared<juce::AudioBuffer<float>>(*sharedBuffer);
 
-        // Use JUCE thread for safe background analysis
-        if (analysisThread != nullptr) {
-          shouldStopAnalysis = true;
-          analysisThread->stopThread(3000);
-          analysisThread = nullptr;
-        }
-        shouldStopAnalysis = false;
+        // Store buffer for later processing
         {
           juce::ScopedLock lock(analysisMutex);
           analysisBuffer = sharedBuffer;
           analysisSampleRate = sampleRate;
         }
-        analysisCallback = onComplete;
-
-        analysisThread = std::make_unique<AnalysisThread>(*this);
-        analysisThread->startThread(juce::Thread::Priority::low);
       });
+}
+
+void Sample2MidiAudioProcessor::processSample() {
+  // Run analysis on background thread
+  if (analysisThread != nullptr) {
+    shouldStopAnalysis = true;
+    analysisThread->stopThread(3000);
+    analysisThread = nullptr;
+  }
+  shouldStopAnalysis = false;
+
+  analysisThread = std::make_unique<AnalysisThread>(*this);
+  analysisThread->startThread(juce::Thread::Priority::low);
 }
 
 std::vector<MidiNote>
@@ -173,237 +178,235 @@ double Sample2MidiAudioProcessor::getTransportSourcePosition() const {
 }
 
 // -----------------------------------------------------------------------
-// Scale and BPM detection
+// MIDI export
 // -----------------------------------------------------------------------
 
-juce::String Sample2MidiAudioProcessor::detectScaleFromAudio() {
-  // Use the already detected notes from BasicPitch
+void Sample2MidiAudioProcessor::exportMidiToFile() {
   if (detectedNotes.empty())
-    return juce::String("");
+    return;
 
-  // 1. Build pitch class profile
-  double pitchProfile[12] = {0};
+  auto chooser = std::make_shared<juce::FileChooser>(
+      "Save MIDI file...",
+      juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+          .getChildFile("Sample2MIDI_Export.mid"),
+      "*.mid");
 
-  for (const auto &note : detectedNotes) {
-    int pc = note.noteNumber % 12;
-    double weight = (note.endSample - note.startSample) * note.velocity;
-    pitchProfile[pc] += weight;
+  chooser->launchAsync(juce::FileBrowserComponent::saveMode |
+                           juce::FileBrowserComponent::canSelectFiles |
+                           juce::FileBrowserComponent::warnAboutOverwriting,
+                       [this, chooser](const juce::FileChooser &fc) {
+                         auto result = fc.getResult();
+                         if (result != juce::File{}) {
+                           midiBuilder.exportMidi(detectedNotes,
+                                                  currentSampleRate, result,
+                                                  120.0f);
+                         }
+                       });
+}
+
+juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
+  return new Sample2MidiAudioProcessor();
+}
+
+// -----------------------------------------------------------------------
+// Internal analysis thread method
+// -----------------------------------------------------------------------
+
+void Sample2MidiAudioProcessor::runAnalysisInternal() {
+  if (shouldStopAnalysis || analysisThread->threadShouldExit())
+    return;
+  double covMajor = 0, covMinor = 0;
+  double varProfile = 0, varMajor = 0, varMinor = 0;
+
+  for (int j = 0; j < 12; ++j) {
+    double dp = pitchProfile[j] - meanProfile;
+    double dm = rotatedMajor[j] - meanMajor;
+    double dn = rotatedMinor[j] - meanMinor;
+
+    covMajor += dp * dm;
+    covMinor += dp * dn;
+    varProfile += dp * dp;
+    varMajor += dm * dm;
+    varMinor += dn * dn;
   }
 
-  // 2. If all weights are 0, return empty string
-  double totalWeight = 0;
-  for (int i = 0; i < 12; ++i)
-    totalWeight += pitchProfile[i];
+  // Pearson correlation
+  double corrMajor = 0, corrMinor = 0;
+  if (varProfile > 0 && varMajor > 0)
+    corrMajor = covMajor / std::sqrt(varProfile * varMajor);
+  if (varProfile > 0 && varMinor > 0)
+    corrMinor = covMinor / std::sqrt(varProfile * varMinor);
 
-  if (totalWeight <= 0)
-    return juce::String("");
-  // 3. Krumhansl-Schmuckler templates
-  const double majorTemplate[12] = {6.35, 2.23, 3.48, 2.33, 4.38, 4.09,
-                                    2.52, 5.19, 2.39, 3.66, 2.29, 2.88};
-  const double minorTemplate[12] = {6.33, 2.68, 3.52, 5.38, 2.60, 3.53,
-                                    2.54, 4.75, 3.98, 2.69, 3.34, 3.17};
+  if (corrMajor > bestCorrelationMajor) {
+    bestCorrelationMajor = corrMajor;
+    bestRootMajor = r;
+  }
+  if (corrMinor > bestCorrelationMinor) {
+    bestCorrelationMinor = corrMinor;
+    bestRootMinor = r;
+  }
+}
 
-  if (pitchHistogram.empty())
-    return juce::String();
+// Map to scale names
+const char *majorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
+                            "F#", "G",  "G#", "A",  "A#", "B"};
+const char *minorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
+                            "F#", "G",  "G#", "A",  "A#", "B"};
 
-  // 4. Compute Pearson correlation for each root (0-11)
-  double bestCorrelation = -1e10;
-  int bestRoot = 0;
-  bool isMajor = true;
+if (bestCorrelationMajor >= bestCorrelationMinor) {
+  return juce::String(majorRoots[bestRootMajor]) + " Major";
+} else {
+  return juce::String(minorRoots[bestRootMinor]) + " Minor";
+}
+}
 
-  for (int r = 0; r < 12; ++r) {
-    // Rotate templates by r positions
-    double rotatedMinor[12];
-    for (int i = 0; i < 12; ++i) {
-      rotatedMajor[i] = majorTemplate[(i + r) % 12];
-      rotatedMinor[i] = minorTemplate[(i + r) % 12];
-    }
+// -----------------------------------------------------------------------
+// Internal analysis thread method
+// -----------------------------------------------------------------------
+return 120.0; // Default BPM
 
-    // Compute Pearson correlation
-    double meanProfile = 0, meanMajor = 0, meanMinor = 0;
+const float *data = buffer.getReadPointer(0);
+int numSamples = buffer.getNumSamples();
+double rate = sampleRate;
 
-    double dn = rotatedMinor[i] - meanMinor;
+// Simple onset detection using energy difference
+const int blockSize = 1024;
+std::vector<double> onsetStrength;
 
-    for (const auto &pair : pitchHistogram) {
-      double dn = rotatedMinor[i] - meanMinor;
-      if (interval == 4)
-        covMajor += dp * dm;
-      else
-        covMinor += dp2 * dn2;
-    }
+for (int i = blockSize; i < numSamples - blockSize; i += blockSize) {
+  double energy = 0;
+  for (int j = 0; j < blockSize; ++j) {
+    energy += data[i + j] * data[i + j];
+  }
+  energy = std::sqrt(energy / blockSize);
 
-    // Map to scale names
-    const char *majorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
-                                "F#", "G",  "G#", "A",  "A#", "B"};
-    const char *minorRoots[] = {"C",  "C#", "D",  "D#", "E",  "F",
-                                "F#", "G",  "G#", "A",  "A#", "B"};
+  // Compare with previous block
+  double prevEnergy = 0;
+  for (int j = 0; j < blockSize; ++j) {
+    prevEnergy += data[i - blockSize + j] * data[i - blockSize + j];
+  }
+  prevEnergy = std::sqrt(prevEnergy / blockSize);
 
-    if (majorThirdCount > minorThirdCount) {
-      return juce::String(majorRoots[rootSemitone]) + " Major";
-    } else {
-      return juce::String(minorRoots[rootSemitone]) + " Minor";
-    }
+  // Onset if energy increased significantly
+  if (energy > prevEnergy * 1.5) {
+    onsetStrength.push_back((double)i / rate);
+  }
+}
+
+if (onsetStrength.size() < 4)
+  return 120.0; // Not enough onsets detected
+
+// Find the most common interval between onsets
+std::map<double, int> intervalHistogram;
+
+for (size_t i = 1; i < onsetStrength.size(); ++i) {
+  double interval = onsetStrength[i] - onsetStrength[i - 1];
+  // Round to nearest common BPM interval
+  double bpm = 60.0 / interval;
+
+  // Quantize to common BPM values
+  bpm = std::round(bpm / 5.0) * 5.0;
+  bpm = std::clamp(bpm, 60.0, 200.0);
+
+  intervalHistogram[bpm]++;
+}
+
+// Find most common BPM
+double detectedBPM = 120.0;
+int maxCount = 0;
+for (const auto &pair : intervalHistogram) {
+  if (pair.second > maxCount) {
+    maxCount = pair.second;
+    detectedBPM = pair.first;
+  }
+}
+
+return detectedBPM;
+}
+
+// ---------------------------------------------------------------------------
+// MIDI export
+// ---------------------------------------------------------------------------
+
+void Sample2MidiAudioProcessor::exportMidiToFile() {
+  if (detectedNotes.empty())
+    return;
+
+  auto chooser = std::make_shared<juce::FileChooser>(
+      "Save MIDI file...",
+      juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
+          .getChildFile("Sample2MIDI_Export.mid"),
+      "*.mid");
+
+  chooser->launchAsync(juce::FileBrowserComponent::saveMode |
+                           juce::FileBrowserComponent::canSelectFiles |
+                           juce::FileBrowserComponent::warnAboutOverwriting,
+                       [this, chooser](const juce::FileChooser &fc) {
+                         auto result = fc.getResult();
+                         if (result != juce::File{}) {
+                           midiBuilder.exportMidi(detectedNotes,
+                                                  currentSampleRate, result,
+                                                  120.0f);
+                         }
+                       });
+}
+
+juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
+  return new Sample2MidiAudioProcessor();
+}
+
+// -----------------------------------------------------------------------
+// Internal analysis thread method
+// -----------------------------------------------------------------------
+void Sample2MidiAudioProcessor::runAnalysisInternal() {
+  if (shouldStopAnalysis || analysisThread->threadShouldExit())
+    return;
+
+  // Copy shared data under lock
+  std::shared_ptr<juce::AudioBuffer<float>> localBuffer;
+  double localSampleRate;
+  {
+    juce::ScopedLock lock(analysisMutex);
+    localBuffer = analysisBuffer;
+    localSampleRate = analysisSampleRate;
   }
 
-  double Sample2MidiAudioProcessor::detectBPMFromAudio(
-      const juce::AudioBuffer<float> &buffer, double sampleRate) {
-    if (buffer.getNumSamples() == 0)
-      return 120.0; // Default BPM
+  if (!localBuffer)
+    return;
 
-    const float *data = buffer.getReadPointer(0);
-    int numSamples = buffer.getNumSamples();
-    double rate = sampleRate;
+  // ======== DEBUG LOGGING ========
+  DBG("=== Analysis Started ===");
+  DBG("Buffer size: " + juce::String(localBuffer->getNumSamples()));
+  DBG("Sample rate: " + juce::String(localSampleRate));
+  DBG("Channels: " + juce::String(localBuffer->getNumChannels()));
 
-    // Simple onset detection using energy difference
-    const int blockSize = 1024;
-    std::vector<double> onsetStrength;
+  float rmsTotal = 0;
+  const float *data = localBuffer->getReadPointer(0);
+  for (int i = 0; i < localBuffer->getNumSamples(); i++)
+    rmsTotal += data[i] * data[i];
+  rmsTotal = sqrt(rmsTotal / localBuffer->getNumSamples());
+  DBG("Overall RMS: " + juce::String(rmsTotal));
+  // ======== END DEBUG ========
 
-    for (int i = blockSize; i < numSamples - blockSize; i += blockSize) {
-      double energy = 0;
-      for (int j = 0; j < blockSize; ++j) {
-        energy += data[i + j] * data[i + j];
-      }
-      energy = std::sqrt(energy / blockSize);
+  // BPM detection on background thread (not UI thread)
+  float bpm = detectBPMFromAudio(*localBuffer, localSampleRate);
+  detectedBPM.store(bpm);
+  juce::Logger::writeToLog("BPM detected on background thread: " +
+                           juce::String(bpm));
 
-      // Compare with previous block
-      double prevEnergy = 0;
-      for (int j = 0; j < blockSize; ++j) {
-        prevEnergy += data[i - blockSize + j] * data[i - blockSize + j];
-      }
-      prevEnergy = std::sqrt(prevEnergy / blockSize);
+  auto notes = analyzeBuffer(*localBuffer, localSampleRate);
 
-      // Onset if energy increased significantly
-      if (energy > prevEnergy * 1.5) {
-        onsetStrength.push_back((double)i / rate);
-      }
-    }
+  // ======== DEBUG LOGGING ========
+  DBG("Notes after analyzeBuffer: " + juce::String(notes.size()));
+  // ======== END DEBUG ========
 
-    if (onsetStrength.size() < 4)
-      return 120.0; // Not enough onsets detected
-
-    // Find the most common interval between onsets
-    std::map<double, int> intervalHistogram;
-
-    for (size_t i = 1; i < onsetStrength.size(); ++i) {
-      double interval = onsetStrength[i] - onsetStrength[i - 1];
-      // Round to nearest common BPM interval
-      double bpm = 60.0 / interval;
-
-      // Quantize to common BPM values
-      bpm = std::round(bpm / 5.0) * 5.0;
-      bpm = std::clamp(bpm, 60.0, 200.0);
-
-      intervalHistogram[bpm]++;
-    }
-
-    // Find most common BPM
-    double detectedBPM = 120.0;
-    int maxCount = 0;
-    for (const auto &pair : intervalHistogram) {
-      if (pair.second > maxCount) {
-        maxCount = pair.second;
-        detectedBPM = pair.first;
-      }
-    }
-
-    return detectedBPM;
-  }
-
-  // ---------------------------------------------------------------------------
-  // MIDI export
-  // ---------------------------------------------------------------------------
-
-  void Sample2MidiAudioProcessor::exportMidiToFile() {
-    // Use filtered notes if available, otherwise use detected notes
-    const std::vector<MidiNote> &notesToExport =
-        filteredNotes.empty() ? detectedNotes : filteredNotes;
-
-    if (notesToExport.empty())
-      return;
-
-    auto chooser = std::make_shared<juce::FileChooser>(
-        "Save MIDI file...",
-        juce::File::getSpecialLocation(juce::File::userDesktopDirectory)
-            .getChildFile("Sample2MIDI_Export.mid"),
-        "*.mid");
-
-    chooser->launchAsync(
-        juce::FileBrowserComponent::saveMode |
-            juce::FileBrowserComponent::canSelectFiles |
-            juce::FileBrowserComponent::warnAboutOverwriting,
-        [this, chooser, notesToExport](const juce::FileChooser &fc) {
-          auto result = fc.getResult();
-          if (result != juce::File{}) {
-            // Check if chord mode is active
-            if (chordModeActive) {
-              auto chordNotes = midiBuilder.quantizeToChords(notesToExport,
-                                                             currentSampleRate);
-              midiBuilder.exportMidi(chordNotes, currentSampleRate, result,
-                                     detectedBPM.load());
-            } else {
-              midiBuilder.exportMidi(notesToExport, currentSampleRate, result,
-                                     detectedBPM.load());
-            }
-          }
-        });
-  }
-
-  juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
-    return new Sample2MidiAudioProcessor();
-  }
-
-  // -----------------------------------------------------------------------
-  // Internal analysis thread method
-  // -----------------------------------------------------------------------
-  void Sample2MidiAudioProcessor::runAnalysisInternal() {
-    if (shouldStopAnalysis || analysisThread->threadShouldExit())
-      return;
-
-    // Copy shared data under lock
-    std::shared_ptr<juce::AudioBuffer<float>> localBuffer;
-    double localSampleRate;
-    {
-      juce::ScopedLock lock(analysisMutex);
-      localBuffer = analysisBuffer;
-      localSampleRate = analysisSampleRate;
-    }
-
-    if (!localBuffer)
-      return;
-
-    // ======== DEBUG LOGGING ========
-    DBG("=== Analysis Started ===");
-    DBG("Buffer size: " + juce::String(localBuffer->getNumSamples()));
-    DBG("Sample rate: " + juce::String(localSampleRate));
-    DBG("Channels: " + juce::String(localBuffer->getNumChannels()));
-
-    float rmsTotal = 0;
-    const float *data = localBuffer->getReadPointer(0);
-    for (int i = 0; i < localBuffer->getNumSamples(); i++)
-      rmsTotal += data[i] * data[i];
-    rmsTotal = sqrt(rmsTotal / localBuffer->getNumSamples());
-    DBG("Overall RMS: " + juce::String(rmsTotal));
-    // ======== END DEBUG ========
-
-    // BPM detection on background thread (not UI thread)
-    float bpm = detectBPMFromAudio(*localBuffer, localSampleRate);
-    detectedBPM.store(bpm);
-    juce::Logger::writeToLog("BPM detected on background thread: " +
-                             juce::String(bpm));
-
-    auto notes = analyzeBuffer(*localBuffer, localSampleRate);
-
-    // ======== DEBUG LOGGING ========
-    DBG("Notes after analyzeBuffer: " + juce::String(notes.size()));
-    // ======== END DEBUG ========
-
-    if (shouldStopAnalysis || analysisThread->threadShouldExit())
-      return;
-    juce::MessageManager::callAsync([this, notes]() mutable {
-      detectedNotes = std::move(notes);
-      if (analysisCallback)
-        analysisCallback((int)detectedNotes.size());
-      if (auto *editor = getActiveEditor())
-        editor->repaint();
-    });
-  }
+  if (shouldStopAnalysis || analysisThread->threadShouldExit())
+    return;
+  juce::MessageManager::callAsync([this, notes]() mutable {
+    detectedNotes = std::move(notes);
+    if (analysisCallback)
+      analysisCallback((int)detectedNotes.size());
+    if (auto *editor = getActiveEditor())
+      editor->repaint();
+  });
+}
