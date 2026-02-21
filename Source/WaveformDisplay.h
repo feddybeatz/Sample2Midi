@@ -3,7 +3,6 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
-
 class WaveformDisplay : public juce::Component {
 public:
   WaveformDisplay(juce::AudioFormatManager &formatManager,
@@ -37,6 +36,8 @@ private:
   double playheadPosition = 0.0;
   double zoomLevel = 1.0;
   double viewStart = 0.0;
+
+public:
   bool isDraggingPlayhead = false;
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformDisplay)
 };

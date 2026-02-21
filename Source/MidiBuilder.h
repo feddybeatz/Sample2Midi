@@ -21,6 +21,11 @@ public:
                   const juce::File &file, float bpm = 120.0f);
   void performDragDrop(const std::vector<MidiNote> &notes, double sampleRate);
 
+  // Chord mode: quantize notes to chords
+  std::vector<MidiNote> quantizeToChords(const std::vector<MidiNote> &notes,
+                                         double sampleRate,
+                                         double windowMs = 50.0);
+
 private:
   static constexpr double MIN_NOTE_DURATION_MS = 30.0;
 };

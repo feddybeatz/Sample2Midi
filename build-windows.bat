@@ -61,6 +61,17 @@ echo.
 echo  [1/2] Creating Build-Windows directory...
 if not exist "Build-Windows" mkdir "Build-Windows"
 
+REM Check if ONNX files exist and clear CMake cache if needed
+if exist "onnxruntime.dll" (
+    if exist "Build-Windows\CMakeCache.txt" (
+        echo  ONNX Runtime detected - clearing CMake cache...
+        del /q "Build-Windows\CMakeCache.txt"
+        if exist "Build-Windows\CMakeFiles" (
+            for /d /r "Build-Windows\CMakeFiles" %%d in (CMakeCache.txt) do del /q "%%d" 2>nul
+        )
+    )
+)
+
 REM Get the VS installation path for CMake hint
 for /f "usebackq tokens=*" %%i in (
     `"%VSWHERE%" -latest -property installationPath`

@@ -59,6 +59,8 @@ target_sources(Sample2MIDI PRIVATE
     Source/PitchDetector.h
     Source/MidiBuilder.cpp
     Source/MidiBuilder.h
+    Source/NoteEditor.cpp
+    Source/NoteEditor.h
     Source/WaveformDisplay.cpp
     Source/WaveformDisplay.h
     Source/AudioFileLoader.cpp
@@ -114,16 +116,22 @@ if(MSVC)
 endif()
 
 # ONNX Runtime - skip if not found
-set(ONNXRUNTIME_DIR ${CMAKE_SOURCE_DIR}/onnxruntime)
+set(ONNXRUNTIME_DIR "${CMAKE_SOURCE_DIR}/onnxruntime")
 set(ONNX_FOUND FALSE)
 
-# Check if ONNX Runtime lib exists
+# Check if ONNX Runtime lib exists - try multiple possible names
 if(WIN32)
+    # Try different possible library names
     if(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib")
+        set(ONNX_LIB "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib")
         set(ONNX_FOUND TRUE)
-        message(STATUS "Found ONNX Runtime library")
+        message(STATUS "Found ONNX Runtime library: ${ONNX_LIB}")
+    elseif(EXISTS "${ONNXRUNTIME_DIR}/lib/onnxruntime")
+        set(ONNX_LIB "${ONNXRUNTIME_DIR}/lib/onnxruntime")
+        set(ONNX_FOUND TRUE)
+        message(STATUS "Found ONNX Runtime library: ${ONNX_LIB}")
     else()
-        message(WARNING "ONNX Runtime library not found.")
+        message(WARNING "ONNX Runtime library not found in: ${ONNXRUNTIME_DIR}/lib/")
         message(WARNING "Download from: https://github.com/microsoft/onnxruntime/releases/tag/v1.17.1")
         message(WARNING "Copy onnxruntime.lib -> onnxruntime/lib/")
     endif()
@@ -139,12 +147,14 @@ if(ONNX_FOUND)
     include_directories(${ONNXRUNTIME_DIR}/include)
     link_directories(${ONNXRUNTIME_DIR}/lib)
     
-    # Add onnxruntime library
-    add_library(onnxruntime STATIC IMPORTED)
+    # Add onnxruntime library - link by full path for Windows
     if(WIN32)
+        add_library(onnxruntime STATIC IMPORTED)
         set_target_properties(onnxruntime PROPERTIES
             IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
-            IMPORTED_LOCATION "${ONNXRUNTIME_DIR}/lib/onnxruntime.lib"
+            IMPORTED_LOCATION "${ONNX_LIB}"
+            IMPORTED_LOCATION_DEBUG "${ONNX_LIB}"
+            IMPORTED_LOCATION_RELEASE "${ONNX_LIB}"
         )
     elseif(UNIX)
         set_target_properties(onnxruntime PROPERTIES
@@ -177,6 +187,10 @@ target_link_libraries(Sample2MIDI PRIVATE
 # Link ONNX Runtime only if found
 if(ONNX_FOUND)
     target_link_libraries(Sample2MIDI PRIVATE onnxruntime)
+    # ONNX Runtime on Windows may need these system libs
+    if(WIN32)
+        target_link_libraries(Sample2MIDI PRIVATE "winmm.lib" "ws2_32.lib")
+    endif()
 endif()
 
 # Link RTNeural and BasicPitchCNN if available

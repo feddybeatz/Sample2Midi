@@ -16,6 +16,11 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   // ---- Waveform ----
   addAndMakeVisible(waveformDisplay);
 
+  // Callback to update transport position when dragging playhead
+  waveformDisplay.onPlayheadDrag = [this](double newPosition) {
+    audioProcessor.setPlaybackPosition(newPosition);
+  };
+
   // ---- Zoom buttons ----
   zoomInButton.setButtonText(juce::String("+"));
   zoomOutButton.setButtonText(juce::String("-"));
@@ -72,6 +77,13 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
               spectralDisplay.setAudioData(
                   buffer->getReadPointer(0), buffer->getNumSamples(),
                   audioProcessor.getCurrentSampleRate());
+            }
+
+            // Update note editor with detected notes
+            auto notes = audioProcessor.getDetectedNotes();
+            if (!notes.empty()) {
+              noteEditor.setNotes(notes, audioProcessor.getCurrentSampleRate());
+              filteredNotes = notes;
             }
           });
     });
@@ -190,9 +202,37 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
 
     // Enable/disable spectral display
     spectralDisplay.setVisible(isChordMode);
+
+    // Update chord mode for MIDI export
+    audioProcessor.chordModeActive = isChordMode;
+
     resized();
   };
   addAndMakeVisible(chordModeToggle);
+
+  // ---- Note Editor toggle ----
+  noteEditorToggle.setColour(juce::TextButton::buttonColourId, Colors::inputBg);
+  noteEditorToggle.setColour(juce::TextButton::textColourOffId,
+                             Colors::textGray);
+  noteEditorToggle.setColour(juce::TextButton::buttonOnColourId,
+                             Colors::accentCyan);
+  noteEditorToggle.setColour(juce::TextButton::textColourOnId,
+                             juce::Colours::black);
+  noteEditorToggle.setClickingTogglesState(true);
+  noteEditorToggle.onClick = [this] {
+    bool isVisible = noteEditorToggle.getToggleState();
+    noteEditor.setVisible(isVisible);
+    resized();
+  };
+  addAndMakeVisible(noteEditorToggle);
+  noteEditor.setVisible(false);
+
+  // Note editor callback
+  noteEditor.onNotesChanged = [this](std::vector<MidiNote> activeNotes) {
+    filteredNotes = activeNotes;
+    audioProcessor.setFilteredNotes(activeNotes);
+  };
+  addAndMakeVisible(noteEditor);
 
   // ---- Spectral Display (chord view) ----
   addAndMakeVisible(spectralDisplay);
@@ -234,6 +274,17 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
     playButton.setToggleState(false, juce::dontSendNotification);
     repaint();
   };
+
+  // Double-click to return playhead to start
+  stopButton.onDoubleClick = [this] {
+    audioProcessor.stopPlayback();
+    audioProcessor.setPlaybackPosition(0.0); // rewind transport
+    isPlaying = false;
+    stopTimer();
+    playButton.setToggleState(false, juce::dontSendNotification);
+    waveformDisplay.setPlayheadPosition(0.0); // rewind visual playhead
+    repaint();
+  };
   addAndMakeVisible(stopButton);
 
   // ---- Row 2: Export MIDI button ----
@@ -269,11 +320,16 @@ Sample2MidiAudioProcessorEditor::Sample2MidiAudioProcessorEditor(
   };
   addAndMakeVisible(dragZone);
 
-  // Make editor resizable with minimum size
+  // Make editor resizable with proportional minimum size
   setResizable(true, true);
-  setResizeLimits(800, 500, 1600, 1000); // min 800x500, max 1600x1000
+  // Use proportional resize limits (min 800x500, max 1600x1000)
+  setResizeLimits(800, 500, 1600, 1000);
 
+  // Initial size: proportional to minimum but slightly larger
   setSize(1100, 700);
+
+  // Enable keyboard focus for spacebar shortcuts
+  setWantsKeyboardFocus(true);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,33 +346,47 @@ void Sample2MidiAudioProcessorEditor::paint(juce::Graphics &g) {
   g.fillAll(Colors::background);
 
   auto bounds = getLocalBounds();
+  int w = bounds.getWidth();
+  int h = bounds.getHeight();
 
-  // ---- Top Bar (70px) ----
-  auto topArea = bounds.removeFromTop(70);
+  // ---- Top Bar (8% of height) ----
+  int topHeight = (int)(h * 0.08f);
+  auto topArea = bounds.removeFromTop(topHeight);
   g.setColour(Colors::borderSubtle);
   g.drawHorizontalLine(topArea.getBottom() - 1, 0.0f,
                        (float)topArea.getWidth());
 
-  auto topPadded = topArea.reduced(24, 0);
+  int topMargin = (int)(w * 0.022f);
+  auto topPadded = topArea.reduced(topMargin, 0);
 
-  // Title "Sample2MIDI" - 30px bold, letterSpacing -0.02em
+  // Title "Sample2MIDI" - proportional font size
+  float titleSize = h * 0.043f;
+  titleSize = juce::jmax(20.0f, juce::jmin(titleSize, 36.0f));
   g.setColour(Colors::textWhite);
-  auto titleFont = juce::Font(juce::FontOptions(30.0f, juce::Font::bold));
+  auto titleFont = juce::Font(juce::FontOptions(titleSize, juce::Font::bold));
   titleFont.setExtraKerningFactor(-0.02f);
   g.setFont(titleFont);
-  auto titleArea = topPadded.removeFromLeft(250);
+  int titleWidth = (int)(w * 0.23f);
+  auto titleArea = topPadded.removeFromLeft(titleWidth);
   g.drawText(juce::String("Sample2MIDI"), titleArea,
              juce::Justification::centredLeft);
 
-  // Subtitle "AUDIO TO MIDI CONVERSION ENGINE" - 11px uppercase gray
+  // Subtitle "AUDIO TO MIDI CONVERSION ENGINE" - proportional font size
+  float subSize = h * 0.016f;
+  subSize = juce::jmax(9.0f, juce::jmin(subSize, 14.0f));
   g.setColour(Colors::textDarkGray);
-  g.setFont(juce::Font(juce::FontOptions(11.0f)));
-  auto subArea = topPadded.removeFromLeft(280);
+  g.setFont(juce::Font(juce::FontOptions(subSize)));
+  int subWidth = (int)(w * 0.26f);
+  auto subArea = topPadded.removeFromLeft(subWidth);
   g.drawText(juce::String("AUDIO TO MIDI CONVERSION ENGINE"), subArea,
              juce::Justification::centredLeft);
 
-  // Brand badge: gradient #00E5FF to #00B8D4, black text, 8px radius
-  auto badgeArea = topPadded.removeFromRight(140).reduced(0, 16);
+  // Brand badge - proportional size
+  int badgeWidth = (int)(w * 0.13f);
+  int badgeHeight = (int)(topArea.getHeight() * 0.5f);
+  auto badgeArea =
+      topPadded.removeFromRight(badgeWidth)
+          .reduced(0, (int)((topArea.getHeight() - badgeHeight) / 2));
   auto badgeBounds = badgeArea.toFloat();
 
   // Gradient badge background
@@ -326,15 +396,18 @@ void Sample2MidiAudioProcessorEditor::paint(juce::Graphics &g) {
   g.setGradientFill(gradient);
   g.fillRoundedRectangle(badgeBounds, 8.0f);
 
-  // Badge text
+  // Badge text - proportional font size
   g.setColour(juce::Colours::black);
-  g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+  float badgeTextSize = badgeHeight * 0.5f;
+  g.setFont(juce::Font(juce::FontOptions(badgeTextSize, juce::Font::bold)));
   g.drawText(juce::String("Feddy Beatz"), badgeArea,
              juce::Justification::centred);
 
-  // ---- Waveform Display (340px height, 24px margin) ----
-  auto waveformArea = bounds.reduced(24, 0);
-  auto wfHeight = 340;
+  // ---- Waveform Display (use proportional height, 50% of remaining space)
+  // ----
+  int wfMargin = (int)(w * 0.022f);
+  auto waveformArea = bounds.reduced(wfMargin, 0);
+  int wfHeight = (int)(bounds.getHeight() * 0.50f);
   auto waveformBounds = waveformArea.removeFromTop(wfHeight);
 
   // Background gradient #1A1A24 to #0F0F14
@@ -351,34 +424,40 @@ void Sample2MidiAudioProcessorEditor::paint(juce::Graphics &g) {
     g.setColour(Colors::textDarkGray.withAlpha(
         0.5f + 0.3f * std::sin(juce::Time::currentTimeMillis() * 0.005f)));
     float dash[] = {8.0f, 8.0f};
-    g.drawDashedLine(
-        juce::Line<float>(waveformBounds.getX() + 16, (float)centerY,
-                          waveformBounds.getRight() - 16, (float)centerY),
-        dash, 2, 1.0f);
+    float dashMargin = wfMargin * 0.67f;
+    g.drawDashedLine(juce::Line<float>(waveformBounds.getX() + dashMargin,
+                                       (float)centerY,
+                                       waveformBounds.getRight() - dashMargin,
+                                       (float)centerY),
+                     dash, 2, 1.0f);
   }
 
   // ---- Control Bar background (gradient panel) ----
-  auto controlBgArea = bounds.reduced(16, 0);
+  int controlMargin = (int)(w * 0.015f);
+  auto controlBgArea = bounds.reduced(controlMargin, 0);
   g.setColour(Colors::controlBar);
   g.fillRoundedRectangle(controlBgArea.toFloat(), 8.0f);
 
   // Row separator line inside control bar
   auto sepY = controlBgArea.getY() + controlBgArea.getHeight() / 2;
   g.setColour(Colors::borderSubtle);
-  g.drawHorizontalLine(sepY, (float)controlBgArea.getX() + 16,
-                       (float)controlBgArea.getRight() - 16);
+  g.drawHorizontalLine(sepY, (float)controlBgArea.getX() + controlMargin,
+                       (float)controlBgArea.getRight() - controlMargin);
 
   // ---- Labels above controls ----
-  g.setFont(juce::Font(juce::FontOptions(12.0f)));
+  float labelSize = h * 0.017f;
+  labelSize = juce::jmax(10.0f, juce::jmin(labelSize, 14.0f));
+  g.setFont(juce::Font(juce::FontOptions(labelSize)));
   g.setColour(Colors::textGray);
 
-  // We paint labels in resized() coordinates — use the same layout math
+  // Use same layout math as resized()
   auto cb = getLocalBounds();
-  cb.removeFromTop(60);
+  cb.removeFromTop((int)(h * 0.08f));
   if (hasSample)
-    cb.removeFromBottom(50);
-  auto ctrlArea = cb.removeFromBottom(120).reduced(16, 0);
-  auto innerArea = ctrlArea.reduced(16, 8);
+    cb.removeFromBottom((int)(h * 0.06f));
+  int ctrlHeight = juce::jmax(100, (int)(cb.getHeight() * 0.22f));
+  auto ctrlArea = cb.removeFromBottom(ctrlHeight).reduced(controlMargin, 0);
+  auto innerArea = ctrlArea.reduced(controlMargin, 8);
   auto labelRow = innerArea.removeFromTop(innerArea.getHeight() / 2);
 
   auto paintLabel = [&](juce::Rectangle<int> area, const char *text) {
@@ -386,15 +465,20 @@ void Sample2MidiAudioProcessorEditor::paint(juce::Graphics &g) {
                juce::Justification::centredLeft);
   };
 
-  paintLabel(labelRow.removeFromLeft(120), "Scale");
-  labelRow.removeFromLeft(36 + 16); // auto-detect + gap
-  paintLabel(labelRow.removeFromLeft(180), "Quantize");
-  labelRow.removeFromLeft(16);
-  paintLabel(labelRow.removeFromLeft(110), "Range");
-  labelRow.removeFromLeft(16);
-  paintLabel(labelRow.removeFromLeft(70), "Pitch Bend");
-  labelRow.removeFromLeft(8);
-  paintLabel(labelRow.removeFromLeft(80), "Chord Mode");
+  auto labelW1 = (int)(w * 0.11f);
+  paintLabel(labelRow.removeFromLeft(labelW1), "Scale");
+  labelRow.removeFromLeft((int)(w * 0.04f));
+  auto labelW2 = (int)(w * 0.16f);
+  paintLabel(labelRow.removeFromLeft(labelW2), "Quantize");
+  labelRow.removeFromLeft((int)(w * 0.015f));
+  auto labelW3 = (int)(w * 0.10f);
+  paintLabel(labelRow.removeFromLeft(labelW3), "Range");
+  labelRow.removeFromLeft((int)(w * 0.015f));
+  auto labelW4 = (int)(w * 0.08f);
+  paintLabel(labelRow.removeFromLeft(labelW4), "Pitch Bend");
+  labelRow.removeFromLeft((int)(w * 0.01f));
+  auto labelW5 = (int)(w * 0.08f);
+  paintLabel(labelRow.removeFromLeft(labelW5), "Chord Mode");
 }
 
 // ---------------------------------------------------------------------------
@@ -407,71 +491,134 @@ void Sample2MidiAudioProcessorEditor::resized() {
   int editorWidth = bounds.getWidth();
   int editorHeight = bounds.getHeight();
 
-  // Top bar: 60px fixed height
-  bounds.removeFromTop(60);
+  // Top bar: 8% of height
+  bounds.removeFromTop((int)(editorHeight * 0.08f));
 
-  // ---- Drag zone (bottom, only when sample loaded) ----
+  // ---- Drag zone (bottom, 6% of height, only when sample loaded) ----
   if (hasSample) {
-    auto dragArea = bounds.removeFromBottom(50).reduced(16, 8);
-    dragZone.setBounds(dragArea);
+    int dragHeight = (int)(editorHeight * 0.06f);
+    auto dragArea = bounds.removeFromBottom(dragHeight);
+    int margin = (int)(editorWidth * 0.015f);
+    dragZone.setBounds(dragArea.reduced(margin, (int)(dragHeight * 0.15f)));
   }
 
-  // ---- Control bar (bottom 25% of remaining space, min 100px) ----
-  int controlHeight = juce::jmax(100, bounds.getHeight() / 4);
-  auto controlsArea = bounds.removeFromBottom(controlHeight).reduced(16, 0);
-  auto inner = controlsArea.reduced(16, 8);
+  // ---- Control bar (bottom 22% of remaining space, min 100px) ----
+  int controlHeight = juce::jmax(100, (int)(bounds.getHeight() * 0.22f));
+  auto controlsArea = bounds.removeFromBottom(controlHeight);
+  int controlMargin = (int)(editorWidth * 0.015f);
+  auto inner = controlsArea.reduced(controlMargin, 8);
 
   auto row1 = inner.removeFromTop(inner.getHeight() / 2);
   auto row2 = inner;
 
-  // -- Row 1: use proportional widths --
-  // Scale dropdown: 12% of width
-  scaleDropdown.setBounds(
-      row1.removeFromLeft(juce::jmax(80, editorWidth / 10)).reduced(0, 6));
-  autoDetectButton.setBounds(row1.removeFromLeft(36).reduced(2, 6));
-  row1.removeFromLeft(juce::jmax(8, editorWidth / 60));
+  // -- Row 1: Scale dropdown (12% of width) --
+  auto scaleWidth = (int)(editorWidth * 0.12f);
+  scaleWidth = juce::jmax(80, scaleWidth);
+  scaleDropdown.setBounds(row1.removeFromLeft(scaleWidth).reduced(0, 6));
 
-  // Quantize slider: 20% of width
-  auto quantizeArea = row1.removeFromLeft(juce::jmax(120, editorWidth / 5));
-  quantizeLabel.setBounds(quantizeArea.removeFromRight(50).reduced(0, 6));
+  // Auto-detect button (proportional width)
+  auto detectWidth = (int)(editorWidth * 0.04f);
+  detectWidth = juce::jmax(36, detectWidth);
+  autoDetectButton.setBounds(row1.removeFromLeft(detectWidth).reduced(2, 6));
+
+  // Gap
+  auto gap1 = (int)(editorWidth * 0.01f);
+  row1.removeFromLeft(juce::jmax(8, gap1));
+
+  // -- Quantize slider (18% of width) --
+  auto quantizeWidth = (int)(editorWidth * 0.18f);
+  quantizeWidth = juce::jmax(120, quantizeWidth);
+  auto quantizeArea = row1.removeFromLeft(quantizeWidth);
+  auto labelWidth = (int)(quantizeArea.getWidth() * 0.25f);
+  quantizeLabel.setBounds(
+      quantizeArea.removeFromRight(labelWidth).reduced(0, 6));
   quantizeSlider.setBounds(quantizeArea.reduced(0, 8));
-  row1.removeFromLeft(juce::jmax(8, editorWidth / 60));
 
-  // Range dropdown: 12%
-  rangeDropdown.setBounds(
-      row1.removeFromLeft(juce::jmax(80, editorWidth / 10)).reduced(0, 6));
-  row1.removeFromLeft(juce::jmax(8, editorWidth / 60));
+  // Gap
+  row1.removeFromLeft(juce::jmax(8, (int)(editorWidth * 0.01f)));
 
-  // Toggles: 8% each
-  pitchBendToggle.setBounds(
-      row1.removeFromLeft(juce::jmax(60, editorWidth / 15)).reduced(0, 6));
-  row1.removeFromLeft(juce::jmax(4, editorWidth / 100));
+  // -- Range dropdown (10% of width) --
+  auto rangeWidth = (int)(editorWidth * 0.10f);
+  rangeWidth = juce::jmax(80, rangeWidth);
+  rangeDropdown.setBounds(row1.removeFromLeft(rangeWidth).reduced(0, 6));
 
-  chordModeToggle.setBounds(
-      row1.removeFromLeft(juce::jmax(70, editorWidth / 12)).reduced(0, 6));
+  // Gap
+  row1.removeFromLeft(juce::jmax(8, (int)(editorWidth * 0.01f)));
 
-  // -- Row 2: transport controls --
-  playButton.setBounds(row2.removeFromLeft(40).reduced(0, 4));
-  row2.removeFromLeft(8);
-  stopButton.setBounds(row2.removeFromLeft(40).reduced(0, 4));
+  // -- Toggles (proportional width) --
+  auto toggleWidth = (int)(editorWidth * 0.08f);
+  toggleWidth = juce::jmax(60, toggleWidth);
+  pitchBendToggle.setBounds(row1.removeFromLeft(toggleWidth).reduced(0, 6));
 
-  // Export button: right aligned, 15% width
-  exportButton.setBounds(
-      row2.removeFromRight(juce::jmax(100, editorWidth / 7)).reduced(0, 4));
+  auto gap2 = (int)(editorWidth * 0.005f);
+  row1.removeFromLeft(juce::jmax(4, gap2));
 
-  // ---- Status bar ----
-  auto statusArea = bounds.removeFromBottom(36).reduced(24, 0);
+  auto chordWidth = (int)(editorWidth * 0.09f);
+  chordWidth = juce::jmax(70, chordWidth);
+  chordModeToggle.setBounds(row1.removeFromLeft(chordWidth).reduced(0, 6));
+
+  // -- Row 2: transport controls (proportional) --
+  auto transportWidth = (int)(editorWidth * 0.05f);
+  transportWidth = juce::jmax(40, transportWidth);
+  playButton.setBounds(row2.removeFromLeft(transportWidth).reduced(0, 4));
+
+  auto transportGap = (int)(editorWidth * 0.01f);
+  row2.removeFromLeft(juce::jmax(8, transportGap));
+  stopButton.setBounds(row2.removeFromLeft(transportWidth).reduced(0, 4));
+
+  // Note editor toggle button
+  auto noteToggleWidth = (int)(editorWidth * 0.10f);
+  noteToggleWidth = juce::jmax(70, noteToggleWidth);
+  row2.removeFromLeft(juce::jmax(8, (int)(editorWidth * 0.01f)));
+  noteEditorToggle.setBounds(
+      row2.removeFromLeft(noteToggleWidth).reduced(0, 4));
+
+  // Export button: right aligned (15% width)
+  auto exportWidth = (int)(editorWidth * 0.15f);
+  exportWidth = juce::jmax(100, exportWidth);
+  exportButton.setBounds(row2.removeFromRight(exportWidth).reduced(0, 4));
+
+  // ---- Status bar (5% of height) ----
+  int statusHeight = (int)(editorHeight * 0.05f);
+  auto statusArea = bounds.removeFromBottom(statusHeight);
+  int statusMargin = (int)(editorWidth * 0.02f);
+  statusArea = statusArea.reduced(statusMargin, 0);
+
+  // Status dot: small circle to the left of the label
+  int dotSize = (int)(statusHeight * 0.5f);
+  dotSize = juce::jmax(8, juce::jmin(dotSize, 16));
+  statusDot.setBounds(statusArea.getX(),
+                      statusArea.getY() +
+                          (statusArea.getHeight() - dotSize) / 2,
+                      dotSize, dotSize);
+
+  // Status label: after the dot
+  auto labelArea = statusArea.removeFromLeft((int)(editorWidth * 0.35f));
   statusLabel.setBounds(
-      statusArea.removeFromLeft(juce::jmin(400, editorWidth / 3)));
-  if (!hasSample)
-    loadButton.setBounds(statusArea.removeFromRight(100));
-  else
-    loadButton.setBounds(juce::Rectangle<int>());
+      labelArea.removeFromLeft(labelArea.getWidth() - dotSize - 4));
 
-  // ---- Waveform & Spectral displays ----
-  auto waveformArea = bounds.reduced(16, 8);
+  // Load button: use setVisible instead of empty bounds
+  loadButton.setVisible(!hasSample);
+  if (!hasSample) {
+    auto loadArea = statusArea.removeFromRight((int)(editorWidth * 0.1f));
+    loadButton.setBounds(loadArea);
+  }
 
-  // If chord mode is enabled, show spectral display instead
+  // ---- Waveform & Spectral displays (use remaining space) ----
+  int waveformMargin = (int)(editorWidth * 0.02f);
+  auto waveformArea = bounds.reduced(waveformMargin, 8);
+
+  // Save waveform bounds before any modifications for zoom button positioning
+  auto waveformDisplayBounds = waveformArea;
+
+  // If note editor is enabled, reserve space for it first (40% of height)
+  if (noteEditor.isVisible()) {
+    int noteEditorHeight = (int)(waveformArea.getHeight() * 0.40f);
+    auto noteEditorArea = waveformArea.removeFromBottom(noteEditorHeight);
+    noteEditor.setBounds(noteEditorArea);
+  }
+
+  // If chord mode is enabled, show spectral display below waveform
   if (chordModeToggle.getToggleState()) {
     // Split the area: top half waveform, bottom half spectral
     auto spectralArea =
@@ -482,20 +629,21 @@ void Sample2MidiAudioProcessorEditor::resized() {
     waveformDisplay.setBounds(waveformArea);
   }
 
-  // ---- Zoom buttons (top right of waveform) ----
-  auto zoomW = 30;
-  auto zoomH = 24;
-  auto zoomY = waveformArea.getY() + 8;
-  zoomOutButton.setBounds(
-      zoomOutButton.getBounds().isEmpty()
-          ? juce::Rectangle<int>(waveformArea.getRight() - zoomW * 2 - 8, zoomY,
-                                 zoomW, zoomH)
-          : zoomOutButton.getBounds());
-  zoomInButton.setBounds(
-      zoomInButton.getBounds().isEmpty()
-          ? juce::Rectangle<int>(waveformArea.getRight() - zoomW - 4, zoomY,
-                                 zoomW, zoomH)
-          : zoomInButton.getBounds());
+  // ---- Zoom buttons (top right of waveformDisplay, always use saved bounds)
+  // ----
+  auto zoomW =
+      (int)(waveformDisplayBounds.getWidth() * 0.04f); // 4% of waveform width
+  auto zoomH =
+      (int)(waveformDisplayBounds.getHeight() * 0.08f); // 8% of waveform height
+  zoomW = juce::jmax(25, juce::jmin(zoomW, 40));        // Clamp between 25-40px
+  zoomH = juce::jmax(20, juce::jmin(zoomH, 30));        // Clamp between 20-30px
+  // Always anchor to top of waveformDisplay (use saved bounds)
+  auto zoomY = waveformDisplayBounds.getY() +
+               (int)(waveformDisplayBounds.getHeight() * 0.02f); // 2% from top
+  zoomOutButton.setBounds(waveformDisplayBounds.getRight() - zoomW * 2 - 8,
+                          zoomY, zoomW, zoomH);
+  zoomInButton.setBounds(waveformDisplayBounds.getRight() - zoomW - 4, zoomY,
+                         zoomW, zoomH);
 }
 
 // ---------------------------------------------------------------------------
@@ -610,11 +758,22 @@ void Sample2MidiAudioProcessorEditor::filesDropped(
 // Timer for playhead updates
 // ----------------------------------------------------------------------------
 void Sample2MidiAudioProcessorEditor::timerCallback() {
-  if (isPlaying) {
+  if (isPlaying && !waveformDisplay.isDraggingPlayhead) {
     // Get current playback position from processor
     double position = audioProcessor.getTransportSourcePosition();
     if (position >= 0) {
       waveformDisplay.setPlayheadPosition(position);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard handling for spacebar play/pause
+// ----------------------------------------------------------------------------
+bool Sample2MidiAudioProcessorEditor::keyPressed(const juce::KeyPress &key) {
+  if (key == juce::KeyPress::spaceKey && hasSample) {
+    playButton.triggerClick(); // reuse existing playButton.onClick logic
+    return true;
+  }
+  return false;
 }

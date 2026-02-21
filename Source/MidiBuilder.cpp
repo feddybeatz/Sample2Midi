@@ -103,3 +103,76 @@ void MidiBuilder::performDragDrop(const std::vector<MidiNote> &notes,
         {tempFile.getFullPathName()}, false);
   }
 }
+
+std::vector<MidiNote>
+MidiBuilder::quantizeToChords(const std::vector<MidiNote> &notes,
+                              double sampleRate, double windowMs) {
+  if (notes.empty())
+    return notes;
+
+  // Convert windowMs to samples
+  int windowSamples = (int)(windowMs * sampleRate / 1000.0);
+
+  // Sort notes by startSample
+  std::vector<MidiNote> sortedNotes = notes;
+  std::sort(sortedNotes.begin(), sortedNotes.end(),
+            [](const MidiNote &a, const MidiNote &b) {
+              return a.startSample < b.startSample;
+            });
+
+  std::vector<MidiNote> result;
+  std::vector<MidiNote> currentGroup;
+
+  for (size_t i = 0; i < sortedNotes.size(); ++i) {
+    const auto &note = sortedNotes[i];
+
+    if (currentGroup.empty()) {
+      currentGroup.push_back(note);
+    } else {
+      // Check if this note falls within the window of the first note in group
+      if (note.startSample - currentGroup[0].startSample <= windowSamples) {
+        currentGroup.push_back(note);
+      } else {
+        // Process current group: snap to same start time and dedupe
+        int minStart = currentGroup[0].startSample;
+
+        // Remove duplicates (keep higher velocity)
+        std::map<int, MidiNote> bestNotes;
+        for (const auto &n : currentGroup) {
+          auto it = bestNotes.find(n.noteNumber);
+          if (it == bestNotes.end() || n.velocity > it->second.velocity) {
+            bestNotes[n.noteNumber] = n;
+          }
+        }
+
+        // Add deduped notes with snapped start time
+        for (auto &pair : bestNotes) {
+          pair.second.startSample = minStart;
+          result.push_back(pair.second);
+        }
+
+        // Start new group
+        currentGroup.clear();
+        currentGroup.push_back(note);
+      }
+    }
+  }
+
+  // Process last group
+  if (!currentGroup.empty()) {
+    int minStart = currentGroup[0].startSample;
+    std::map<int, MidiNote> bestNotes;
+    for (const auto &n : currentGroup) {
+      auto it = bestNotes.find(n.noteNumber);
+      if (it == bestNotes.end() || n.velocity > it->second.velocity) {
+        bestNotes[n.noteNumber] = n;
+      }
+    }
+    for (auto &pair : bestNotes) {
+      pair.second.startSample = minStart;
+      result.push_back(pair.second);
+    }
+  }
+
+  return result;
+}

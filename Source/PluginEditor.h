@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MidiBuilder.h"
+#include "NoteEditor.h"
 #include "PluginProcessor.h"
 #include "SpectralDisplay.h"
 #include "WaveformDisplay.h"
@@ -142,6 +144,9 @@ public:
   // Timer for playhead updates
   void timerCallback() override;
 
+  // Keyboard handling for spacebar play/pause
+  bool keyPressed(const juce::KeyPress &key) override;
+
   void updateStatus(int noteCount);
 
 private:
@@ -161,6 +166,7 @@ private:
   // -------------------------------------------------------------------------
   bool hasSample = false;
   bool isPlaying = false;
+  std::vector<MidiNote> filteredNotes;
 
   // -------------------------------------------------------------------------
   // Core references
@@ -171,6 +177,7 @@ private:
   juce::AudioThumbnailCache thumbnailCache{5};
   WaveformDisplay waveformDisplay;
   SpectralDisplay spectralDisplay;
+  NoteEditor noteEditor;
 
   // -------------------------------------------------------------------------
   // Components
@@ -223,7 +230,17 @@ private:
 
   // Row 2 transport
   juce::TextButton playButton;
-  juce::TextButton stopButton;
+
+  // Custom stop button with double-click support
+  struct StopButton : public juce::TextButton {
+    std::function<void()> onDoubleClick;
+    void mouseDoubleClick(const juce::MouseEvent &) override {
+      if (onDoubleClick)
+        onDoubleClick();
+    }
+  } stopButton;
+
+  juce::TextButton noteEditorToggle{"Notes \u270F"};
   juce::TextButton exportButton{"Export MIDI"};
 
   // Zoom

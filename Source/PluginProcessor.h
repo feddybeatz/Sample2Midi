@@ -68,6 +68,16 @@ public:
   /** Detected BPM for MIDI export */
   std::atomic<float> detectedBPM{120.0f};
 
+  /** Chord mode active for MIDI export */
+  bool chordModeActive = false;
+
+  /** Filtered notes from note editor (for export) */
+  std::vector<MidiNote> filteredNotes;
+
+  void setFilteredNotes(const std::vector<MidiNote> &notes) {
+    filteredNotes = notes;
+  }
+
   // -----------------------------------------------------------------------
   // Playback (preview the loaded audio)
   // -----------------------------------------------------------------------

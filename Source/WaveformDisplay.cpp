@@ -2,7 +2,9 @@
 
 WaveformDisplay::WaveformDisplay(juce::AudioFormatManager &formatManager,
                                  juce::AudioThumbnailCache &cache)
-    : thumbnail(512, formatManager, cache) {}
+    : thumbnail(512, formatManager, cache) {
+  setBufferedToImage(true);
+}
 
 void WaveformDisplay::paint(juce::Graphics &g) {
   auto area = getLocalBounds();
@@ -12,21 +14,21 @@ void WaveformDisplay::paint(juce::Graphics &g) {
   g.fillRoundedRectangle(area.toFloat(), 8.0f);
 
   if (thumbnail.getTotalLength() > 0.0) {
-    // Main Waveform with subtle glow effect simulation (drawing twice)
     auto waveformArea = area.reduced(10, 20);
 
-    // Calculate visible range based on zoom
+    // Calculate visible range based on zoom and viewStart
     double totalLength = thumbnail.getTotalLength();
+    double visibleDuration = totalLength / zoomLevel;
     double visibleStart = viewStart;
-    double visibleEnd =
-        std::min(viewStart + totalLength / zoomLevel, totalLength);
+    double visibleEnd = visibleStart + visibleDuration;
 
     // Ensure visible range is valid
-    if (visibleEnd <= visibleStart) {
-      visibleStart = 0;
+    if (visibleEnd > totalLength) {
       visibleEnd = totalLength;
+      visibleStart = std::max(0.0, totalLength - visibleDuration);
     }
 
+    // Draw the visible portion of the waveform
     // Glow layer
     g.setColour(juce::Colour(0x4000e5ff));
     thumbnail.drawChannels(g, waveformArea, visibleStart, visibleEnd, 1.2f);
@@ -35,12 +37,12 @@ void WaveformDisplay::paint(juce::Graphics &g) {
     g.setColour(juce::Colour(0xff00e5ff));
     thumbnail.drawChannels(g, waveformArea, visibleStart, visibleEnd, 1.0f);
 
-    // Draw playhead
+    // Draw playhead at correct X position relative to viewStart
     if (playheadPosition >= visibleStart && playheadPosition <= visibleEnd) {
       float playheadX =
-          waveformArea.getX() + (float)((playheadPosition - visibleStart) /
-                                        (visibleEnd - visibleStart)) *
-                                    waveformArea.getWidth();
+          (float)((playheadPosition - visibleStart) / visibleDuration) *
+          waveformArea.getWidth();
+      playheadX = juce::jlimit(0.0f, (float)waveformArea.getWidth(), playheadX);
 
       // Playhead line
       g.setColour(juce::Colour(0xffff4444));
@@ -123,12 +125,21 @@ void WaveformDisplay::setPlayheadPosition(double positionSeconds) {
 void WaveformDisplay::setZoom(double newZoom) {
   zoomLevel = std::clamp(newZoom, 1.0, 50.0);
 
-  // Ensure playhead is still visible after zoom
   double totalLength = thumbnail.getTotalLength();
-  double visibleEnd = viewStart + totalLength / zoomLevel;
-  if (playheadPosition > visibleEnd) {
-    viewStart = std::max(0.0, playheadPosition - 1.0);
+  if (totalLength <= 0.0) {
+    repaint();
+    return;
   }
+
+  // Calculate visible duration based on new zoom level
+  double visibleDuration = totalLength / zoomLevel;
+
+  // Center view on playhead position
+  viewStart = playheadPosition - (visibleDuration / 2.0);
+
+  // Clamp viewStart between 0 and (totalLength - visibleDuration)
+  viewStart =
+      std::clamp(viewStart, 0.0, std::max(0.0, totalLength - visibleDuration));
 
   repaint();
 }
@@ -168,23 +179,16 @@ void WaveformDisplay::mouseDrag(const juce::MouseEvent &e) {
   if (!isDraggingPlayhead)
     return;
 
-  auto waveformArea = getLocalBounds().reduced(10, 20);
-
   if (thumbnail.getTotalLength() > 0.0) {
     double totalLength = thumbnail.getTotalLength();
-    double visibleStart = viewStart;
-    double visibleEnd =
-        std::min(viewStart + totalLength / zoomLevel, totalLength);
+    double visibleDuration = totalLength / zoomLevel;
 
-    // Calculate new position from mouse X
-    float relativeX = (e.getPosition().x - waveformArea.getX()) /
-                      (float)waveformArea.getWidth();
-    relativeX = std::clamp(relativeX, 0.0f, 1.0f);
+    // Calculate dragged position in seconds
+    double draggedPos =
+        viewStart + (e.x / (double)getWidth()) * visibleDuration;
+    draggedPos = juce::jlimit(0.0, totalLength, draggedPos);
 
-    double newPosition = visibleStart + relativeX * (visibleEnd - visibleStart);
-    newPosition = std::clamp(newPosition, 0.0, totalLength);
-
-    playheadPosition = newPosition;
+    playheadPosition = draggedPos;
 
     // Notify callback
     if (onPlayheadDrag) {
